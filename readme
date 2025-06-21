@@ -1,237 +1,252 @@
-# Browser Automation MCP (Model Context Protocol) Server
+# MCP Browser Automation
 
-A powerful browser automation server built using the Model Context Protocol (MCP) framework and Playwright. This project allows you to control a web browser programmatically through a clean, interactive command-line interface.
+A powerful browser automation system built with the Model Context Protocol (MCP) and Playwright, featuring an intelligent interactive client for web scraping, testing, and automation tasks.
 
-## 🚀 Features
+## Features
 
-- **Interactive Browser Control**: Start/stop browsers, navigate to websites, interact with elements
-- **Visual & Headless Modes**: Choose between visible browser windows or invisible background operation
-- **Web Scraping**: Extract text, take screenshots, evaluate JavaScript
-- **Form Automation**: Fill forms, click buttons, wait for elements to load
-- **Real-time Interaction**: Watch browser actions in real-time (when not in headless mode)
-- **Error Handling**: Comprehensive error handling with detailed feedback
+### 🚀 Core Browser Automation
+- **Full Browser Control**: Start/stop browser sessions with customizable settings
+- **Navigation**: Navigate to URLs with intelligent page loading detection
+- **Element Interaction**: Click, fill forms, and interact with web elements
+- **Text Extraction**: Extract text from specific elements or entire pages
+- **Screenshots**: Capture full-page screenshots for debugging
+- **JavaScript Execution**: Run custom JavaScript in browser context
 
-## 🛠️ Available Tools
+### 🎯 Smart Element Detection
+- **Intelligent Selectors**: Advanced CSS selector generation with fallback strategies
+- **Clickable Element Discovery**: Automatically find and list interactive elements
+- **Visibility Detection**: Smart visibility checking that accounts for viewport and overlapping elements
+- **Text Element Browsing**: Specialized text content discovery for extraction tasks
 
-1. **start_browser** - Initialize a browser session (headless or visible)
-2. **stop_browser** - Clean shutdown of browser session
-3. **navigate_to** - Navigate to any URL
-4. **click_element** - Click on elements using CSS selectors
-5. **fill_form** - Fill form fields with text
-6. **extract_text** - Extract text content from elements
-7. **take_screenshot** - Capture screenshots of the current page
-8. **evaluate_javascript** - Execute custom JavaScript code
-9. **wait_for_element** - Wait for elements to appear on the page
+### 🔧 Interactive Client Features
+- **Menu-Driven Interface**: User-friendly tool selection and parameter input
+- **Smart Parameter Assistance**: Auto-fetch clickable/text elements for relevant tools
+- **Visual Debugging**: Screenshot capture and page info display
+- **Real-time Element Browsing**: Interactive element selection with previews
+- **Error Handling**: Comprehensive error handling with helpful debugging options
 
-## 📋 Prerequisites
+## Installation
 
-- Python 3.8 or higher
-- pip (Python package manager)
+### Prerequisites
+- Python 3.8+
+- Node.js (for Playwright browser installation)
 
-## 🔧 Installation
+### Setup
 
-1. **Clone or download the project files:**
+1. **Clone the repository**
    ```bash
-   # Make sure you have these files:
-   # - mcp_server.py
-   # - mcp_client.py (or client.py)
+   git clone <repository-url>
+   cd mcp-browser-automation
    ```
 
-2. **Create and activate a virtual environment:**
+2. **Install Python dependencies**
    ```bash
-   python -m venv .venv
-   
-   # Windows
-   .venv\Scripts\activate
-   
-   # macOS/Linux
-   source .venv/bin/activate
+   pip install -r requirements.txt
    ```
 
-3. **Install required packages:**
-   ```bash
-   pip install mcp playwright python-dotenv
-   ```
-
-4. **Install Playwright browser:**
+3. **Install Playwright browsers**
    ```bash
    playwright install chromium
    ```
 
-## 🚀 Quick Start
-
-1. **Start the interactive client:**
+4. **Environment Setup**
    ```bash
-   python mcp_client.py
+   cp .env.example .env
+   # Edit .env with your configuration
    ```
 
-2. **Start a browser session:**
-   - Select tool `1` (start_browser)
-   - Choose `false` for headless to see the browser window
-   - Choose `true` for headless to run invisibly
+### Required Dependencies
+```
+asyncio
+logging
+dotenv
+mcp
+playwright
+fastmcp
+```
 
-3. **Navigate to a website:**
-   - Select tool `3` (navigate_to)
-   - Enter URL: `https://example.com`
+## Usage
 
-4. **Take a screenshot:**
-   - Select tool `7` (take_screenshot)
-   - Press Enter for default filename or specify custom path
+### Starting the System
 
-5. **Continue with more operations or quit:**
-   - Type `y` to run another tool
-   - Type `n` or `q` to exit
+1. **Start the MCP Server**
+   ```bash
+   python mcp_server.py
+   ```
 
-## 💡 Usage Examples
+2. **Run the Interactive Client**
+   ```bash
+   python minimal_client.py
+   ```
+
+### Available Tools
+
+| Tool | Description | Use Case |
+|------|-------------|----------|
+| `start_browser` | Initialize browser session | Begin automation |
+| `stop_browser` | Close browser session | Clean shutdown |
+| `navigate_to` | Navigate to URL | Visit web pages |
+| `click_element` | Click on elements | Button clicks, links |
+| `fill_form` | Fill form fields | Data entry |
+| `extract_text` | Extract text content | Data scraping |
+| `take_screenshot` | Capture screenshots | Debugging, documentation |
+| `evaluate_javascript` | Run JavaScript | Custom page manipulation |
+| `wait_for_element` | Wait for elements | Handle dynamic content |
+| `get_clickable_elements` | List interactive elements | Element discovery |
+| `get_page_info` | Get page metadata | Page analysis |
+
+### Interactive Client Commands
+
+- **Number Selection**: Choose tools by entering their menu number
+- **`q`**: Quit the application
+- **`h`**: Show help information
+- **`i`**: Display internal tools information
+- **`s`**: Take screenshot (during element selection)
+- **`p`**: Show page information
+- **`r`**: Refresh element list
+- **`m`**: Switch to manual input mode
+
+## Examples
 
 ### Basic Web Scraping
-```
-1. start_browser (headless: true)
-2. navigate_to (url: https://news.ycombinator.com)
-3. extract_text (selector: .titleline > a)
-4. take_screenshot (path: hackernews.png)
+```python
+# 1. Start browser
+# 2. Navigate to target website
+# 3. Use get_clickable_elements to find elements
+# 4. Extract text from specific elements
+# 5. Take screenshot for verification
 ```
 
 ### Form Automation
-```
-1. start_browser (headless: false)
-2. navigate_to (url: https://example.com/login)
-3. fill_form (selector: #username, value: myuser)
-4. fill_form (selector: #password, value: mypass)
-5. click_element (selector: #login-button)
+```python
+# 1. Start browser
+# 2. Navigate to form page
+# 3. Use fill_form for input fields
+# 4. Use click_element for buttons
+# 5. Extract confirmation text
 ```
 
 ### Dynamic Content Handling
+```python
+# 1. Navigate to page
+# 2. Use wait_for_element for dynamic content
+# 3. Use evaluate_javascript for complex interactions
+# 4. Extract results when ready
 ```
-1. start_browser (headless: false)
-2. navigate_to (url: https://example.com)
-3. click_element (selector: .load-more-button)
-4. wait_for_element (selector: .new-content, timeout: 5000)
-5. extract_text (selector: .new-content)
+
+## Advanced Features
+
+### Smart Selector Generation
+The system uses sophisticated selector generation that prioritizes:
+1. **ID attributes** (most reliable)
+2. **Data attributes** (modern web apps)
+3. **Meaningful class names** (avoiding utility classes)
+4. **Name attributes**
+5. **Text content matching**
+6. **Hierarchical selectors** with parent context
+
+### Visibility Detection
+Advanced visibility checking that considers:
+- Element dimensions and positioning
+- CSS visibility properties
+- Viewport boundaries
+- Element occlusion by other elements
+- Opacity and display properties
+
+### Interactive Element Selection
+When selecting elements for interaction:
+- **Auto-discovery**: Automatically lists relevant elements
+- **Smart filtering**: Filters out non-interactive elements
+- **Visual preview**: Shows element text and properties
+- **Fallback options**: Manual input when auto-detection fails
+
+## Configuration
+
+### Browser Options
+The browser can be configured with various options:
+```python
+browser_args = [
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-blink-features=AutomationControlled',
+    '--disable-web-security',
+    '--disable-features=VizDisplayCompositor'
+]
 ```
 
-## 🎯 CSS Selectors Guide
+### Hidden Tools
+Some tools are used internally and hidden from the user menu:
+- `evaluate_javascript`: Used by other tools for element detection
+- `wait_for_element`: Used internally for reliable interactions
 
-Understanding CSS selectors is crucial for element interaction:
-
-- **ID**: `#my-id` (elements with id="my-id")
-- **Class**: `.my-class` (elements with class="my-class")
-- **Tag**: `button` (all button elements)
-- **Attribute**: `[type="submit"]` (elements with type="submit")
-- **Combination**: `form .submit-button` (class submit-button inside form)
-
-### Common Selectors
-- Login forms: `#username`, `#password`, `[type="submit"]`
-- Navigation: `.nav-item`, `.menu-link`
-- Content: `.article-title`, `.post-content`
-- Buttons: `button`, `.btn`, `[role="button"]`
-
-## ⚙️ Configuration Options
-
-### Browser Modes
-- **Headless (true)**: Faster, uses less resources, good for automation
-- **Visible (false)**: See what's happening, better for debugging
-
-### Screenshot Options
-- Default: `screenshot.png` in current directory
-- Custom: Specify full path like `/path/to/my_screenshot.png`
-
-### Timeout Settings
-- Default element wait: 10 seconds
-- Customizable per operation
-
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
-**"Browser not started" error:**
-- Always run `start_browser` first before other operations
-- Keep the client running between operations
+**Browser Won't Start**
+- Ensure Playwright browsers are installed: `playwright install`
+- Check system permissions for browser execution
+- Try running with `headless=False` for debugging
 
-**Element not found:**
-- Use browser developer tools (F12) to find correct selectors
-- Try waiting for elements with `wait_for_element` first
-- Use visible mode to see what's happening
+**Elements Not Found**
+- Use the screenshot feature to see current page state
+- Check page loading with `get_page_info`
+- Try waiting for elements with `wait_for_element`
+- Use manual selector input as fallback
 
-**Connection errors:**
-- Ensure mcp_server.py is in the same directory
-- Check that all dependencies are installed
-- Verify virtual environment is activated
+**Click Not Working**
+- Element may not be visible or clickable
+- Use screenshot to verify element state
+- Try scrolling to element first
+- Check for overlapping elements
 
-**Playwright errors:**
-- Run `playwright install chromium` again
-- Check antivirus isn't blocking browser installation
+**Page Loading Issues**
+- Increase timeout values
+- Use `wait_for_element` for dynamic content
+- Check network connectivity
+- Verify target website accessibility
 
-### Debug Tips
-1. Use `headless: false` to see browser actions
-2. Take screenshots to verify page state
-3. Use `extract_text` to confirm page content
-4. Check browser developer console for JavaScript errors
-
-## 📁 Project Structure
-
-```
-browser_mcp/
-├── mcp_server.py      # MCP server with browser automation tools
-├── mcp_client.py      # Interactive client for tool execution
-├── .env              # Environment variables (optional)
-├── .venv/            # Virtual environment
-└── README.md         # This file
+### Debug Mode
+For debugging, start the browser with:
+```python
+await start_browser(headless=False)
 ```
 
-## 🔒 Security Considerations
+This allows you to see the browser window and observe interactions.
 
-- Be respectful when automating websites
-- Check robots.txt and terms of service
-- Implement delays between requests for scraping
-- Don't automate sensitive operations without proper security
-- Keep credentials secure (use environment variables)
+## Architecture
 
-## 🤝 Contributing
+### Components
+- **MCP Server** (`mcp_server.py`): Handles browser automation backend
+- **Interactive Client** (`minimal_client.py`): Provides user interface and tool interaction
+- **Browser Session**: Manages Playwright browser lifecycle
+- **Element Detection**: Smart element discovery and selector generation
 
-Feel free to submit issues, feature requests, or pull requests to improve this browser automation tool.
+### Design Patterns
+- **Async/Await**: Full asynchronous operation for performance
+- **Error Handling**: Comprehensive error handling with user-friendly messages
+- **Separation of Concerns**: Clear separation between server logic and client interface
+- **Extensibility**: Easy to add new tools and features
 
-## 📄 License
+## Contributing
 
-This project is open source. Use responsibly and in accordance with website terms of service.
+1. Fork the repository
+2. Create a feature branch
+3. Add tests for new functionality
+4. Ensure all tests pass
+5. Submit a pull request
 
-## 🆘 Support
+## License
 
-If you encounter issues:
-1. Check the troubleshooting section
-2. Verify all installation steps
-3. Test with simple operations first
-4. Use visible mode to debug problems
+[Add your license information here]
 
-## 🔮 Advanced Usage
+## Support
 
-### Environment Variables
-Create a `.env` file for configuration:
-```
-BROWSER_HEADLESS=true
-DEFAULT_TIMEOUT=10000
-SCREENSHOT_PATH=./screenshots/
-```
-
-### JavaScript Execution
-Use `evaluate_javascript` for complex operations:
-```javascript
-// Get all links
-document.querySelectorAll('a').length
-
-// Scroll to bottom
-window.scrollTo(0, document.body.scrollHeight)
-
-// Get page title
-document.title
-```
-
-### Error Handling
-The system provides detailed error messages. Common patterns:
-- Network errors: Check internet connection and URL
-- Selector errors: Verify element exists and selector syntax
-- Timeout errors: Increase timeout or wait for page load
+For issues and questions:
+- Check the troubleshooting section
+- Review the examples
+- Open an issue on GitHub
 
 ---
 
-**Happy Automating! 🤖✨**
+**Note**: This tool is designed for legitimate automation tasks. Always respect website terms of service and robots.txt files when using for web scraping.
