@@ -9,6 +9,12 @@ load_dotenv()
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s: %(message)s")
 
+# Tools that should be hidden from the user menu (internal/utility tools)
+HIDDEN_TOOLS = {
+    'evaluate_javascript',  # Used internally by get_clickable_elements and other tools
+    'wait_for_element'      # Used internally by click_element and other tools
+}
+
 def cast_input_to_type(value: str, type_hint: str):
     try:
         if type_hint == "integer":
@@ -23,14 +29,19 @@ def cast_input_to_type(value: str, type_hint: str):
         raise ValueError(f"Invalid input '{value}' for expected type {type_hint}")
 
 def show_tools_menu(available_tools):
-    """Display tools in a compact format"""
+    """Display tools in a compact format, excluding internal tools"""
+    # Filter out hidden tools
+    visible_tools = [tool for tool in available_tools if tool.name not in HIDDEN_TOOLS]
+    
     print("\n" + "=" * 60)
     print("AVAILABLE TOOLS:")
     print("=" * 60)
-    for idx, tool in enumerate(available_tools):
+    for idx, tool in enumerate(visible_tools):
         print(f"{idx + 1:2d}. {tool.name:<20} | {tool.description}")
     print("=" * 60)
-    print("Commands: [tool number] | 'q' to quit | 'h' for help")
+    print("Commands: [tool number] | 'q' to quit | 'h' for help | 'i' for info")
+    
+    return visible_tools  # Return filtered list
 
 async def get_clickable_elements_data(session):
     """Helper function to get clickable elements data from server"""
@@ -82,6 +93,156 @@ async def get_page_info(session):
         return {"error": "No page info available"}
     except Exception as e:
         return {"error": f"Failed to get page info: {str(e)}"}
+
+async def get_text_elements_data(session):
+    """Helper function to get text elements data from server"""
+    try:
+        print("\n🔍 Fetching text elements from browser...")
+        # Use JavaScript evaluation to get text-containing elements
+        response = await session.call_tool("evaluate_javascript", {
+            "expression": """
+            (() => {
+                const elements = document.querySelectorAll(`
+                    h1, h2, h3, h4, h5, h6, p, div, span, a, button, li, td, th,
+                    article, section, main, aside, header, footer, nav,
+                    [role="heading"], [role="text"], [role="article"]
+                `);
+                
+                const result = [];
+                const seenText = new Set();
+                
+                for (let el of elements) {
+                    const text = el.textContent?.trim();
+                    if (!text || text.length < 5) continue; // Skip very short text
+                    
+                    // Skip if text is too long (likely contains child elements)
+                    if (text.length > 500) continue;
+                    
+                    // Skip duplicates
+                    if (seenText.has(text)) continue;
+                    seenText.add(text);
+                    
+                    // Check if element is visible
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    if (rect.width <= 0 || rect.height <= 0) continue;
+                    if (style.visibility === 'hidden' || style.display === 'none') continue;
+                    
+                    // Get selector (reuse the existing function if available)
+                    let selector;
+                    if (window.MCPGetSelector) {
+                        selector = window.MCPGetSelector(el);
+                    } else {
+                        // Fallback selector logic
+                        if (el.id) {
+                            selector = "#" + el.id;
+                        } else if (el.className && typeof el.className === 'string') {
+                            const classes = el.className.trim().split(/\\s+/);
+                            selector = "." + classes[0];
+                        } else {
+                            selector = el.tagName.toLowerCase();
+                        }
+                    }
+                    
+                    result.push({
+                        text: text,
+                        selector: selector,
+                        tag: el.tagName.toLowerCase(),
+                        length: text.length
+                    });
+                }
+                
+                // Sort by tag priority and text length
+                result.sort((a, b) => {
+                    const tagPriority = { h1: 0, h2: 1, h3: 2, h4: 3, h5: 4, h6: 5, p: 6, div: 10 };
+                    const aPriority = tagPriority[a.tag] || 20;
+                    const bPriority = tagPriority[b.tag] || 20;
+                    
+                    if (aPriority !== bPriority) return aPriority - bPriority;
+                    return a.length - b.length; // Shorter text first within same tag type
+                });
+                
+                return result.slice(0, 50); // Limit to 50 elements
+            })()
+            """
+        })
+        
+        if hasattr(response, "content") and response.content:
+            for content_item in response.content:
+                if hasattr(content_item, "text"):
+                    import json
+                    try:
+                        data = json.loads(content_item.text)
+                        return data, None
+                    except json.JSONDecodeError:
+                        return [], content_item.text
+        return [], "No response content"
+    except Exception as e:
+        return [], f"Failed to fetch text elements: {str(e)}"
+
+async def get_body_text(session):
+    """Helper function to get all body text"""
+    try:
+        response = await session.call_tool("evaluate_javascript", {
+            "expression": """
+            (() => {
+                const body = document.body;
+                if (!body) return { error: "No body element found" };
+                
+                // Get clean text content
+                const text = body.innerText || body.textContent || "";
+                
+                // Also get structured text by headings
+                const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).map(h => ({
+                    level: h.tagName.toLowerCase(),
+                    text: h.textContent?.trim()
+                })).filter(h => h.text);
+                
+                // Get paragraphs
+                const paragraphs = Array.from(document.querySelectorAll('p')).map(p => 
+                    p.textContent?.trim()
+                ).filter(p => p && p.length > 10);
+                
+                return {
+                    fullText: text.trim(),
+                    wordCount: text.trim().split(/\\s+/).length,
+                    charCount: text.length,
+                    headings: headings.slice(0, 20), // Limit headings
+                    paragraphs: paragraphs.slice(0, 10) // Limit paragraphs
+                };
+            })()
+            """
+        })
+        
+        if hasattr(response, "content") and response.content:
+            for content_item in response.content:
+                if hasattr(content_item, "text"):
+                    import json
+                    try:
+                        return json.loads(content_item.text)
+                    except json.JSONDecodeError:
+                        return {"error": "Failed to parse body text"}
+        return {"error": "No response content"}
+    except Exception as e:
+        return {"error": f"Failed to get body text: {str(e)}"}
+
+def show_internal_tools_info():
+    """Show information about hidden internal tools"""
+    print("\n" + "=" * 60)
+    print("INTERNAL TOOLS (Auto-used by other tools):")
+    print("=" * 60)
+    print("🔧 evaluate_javascript:")
+    print("   • Executes JavaScript in browser context")
+    print("   • Used by: get_clickable_elements, get_page_info")
+    print("   • Automatically runs custom JS for element detection")
+    print()
+    print("⏳ wait_for_element:")
+    print("   • Waits for elements to appear on page")
+    print("   • Used by: click_element (when elements aren't immediately available)")
+    print("   • Automatically handles dynamic content loading")
+    print()
+    print("These tools work behind the scenes to make other tools more reliable!")
+    print("=" * 60)
 
 async def get_user_input_for_param(session, selected_tool, param, definition, is_required=False):
     """Get user input for a parameter with validation and clickable element support"""
@@ -189,6 +350,118 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                 else:
                     print("❌ Invalid option. Choose 's', 'p', 'm', or 'r'.")
 
+    # Special handling: auto-fetch text elements for extract_text tool
+    elif "extract" in selected_tool.name.lower() and "selector" in param.lower():
+        print(f"📝 Text Extraction Options:")
+        print("1. 📋 Browse text elements on page")
+        print("2. 📄 Get all body text")
+        print("3. ✏️  Manual selector input")
+        
+        while True:
+            choice = input("Choose option (1-3): ").strip()
+            
+            if choice == "1":
+                # Get text elements
+                elements, error = await get_text_elements_data(session)
+                
+                if error:
+                    print(f"⚠️ Warning while fetching text elements: {error}")
+                
+                if elements:
+                    print(f"\n📝 Found {len(elements)} text elements:")
+                    print("=" * 80)
+                    
+                    for i, el in enumerate(elements):
+                        text = el.get("text", "[No text]").strip()
+                        selector = el.get("selector", "<unknown>")
+                        tag = el.get("tag", "unknown")
+                        length = el.get("length", 0)
+                        
+                        # Truncate long text for display
+                        display_text = text[:60] + "..." if len(text) > 60 else text
+                        
+                        print(f"{i + 1:2d}. [{tag.upper()}] {display_text} ({length} chars)")
+                        print(f"    Selector: {selector}")
+                        
+                        # Add spacing every 5 items for readability
+                        if i < len(elements) - 1 and (i + 1) % 5 == 0:
+                            print()
+                    
+                    print("=" * 80)
+                    
+                    while True:
+                        user_input = input(f"Choose (1-{len(elements)}) | 'b' back | 's' screenshot: ").strip()
+                        
+                        if user_input.lower() == 'b':
+                            break
+                        elif user_input.lower() == 's':
+                            await take_debug_screenshot(session)
+                            continue
+                        
+                        try:
+                            selected = int(user_input) - 1
+                            if 0 <= selected < len(elements):
+                                chosen_element = elements[selected]
+                                print(f"✅ Selected text: {chosen_element['text'][:100]}...")
+                                print(f"🎯 Selector: {chosen_element['selector']}")
+                                return chosen_element["selector"]
+                            else:
+                                print(f"❌ Invalid selection. Enter 1-{len(elements)} or 'b' to go back.")
+                        except ValueError:
+                            print("❌ Please enter a valid number or 'b'.")
+                else:
+                    print("⚠️ No text elements found on the current page.")
+                    print("Falling back to manual input...")
+                    break
+                    
+            elif choice == "2":
+                # Get body text
+                body_data = await get_body_text(session)
+                
+                if "error" in body_data:
+                    print(f"❌ Error getting body text: {body_data['error']}")
+                    continue
+                
+                print(f"\n📄 Page Body Text Summary:")
+                print("=" * 60)
+                print(f"📊 Word Count: {body_data.get('wordCount', 0)}")
+                print(f"📊 Character Count: {body_data.get('charCount', 0)}")
+                
+                headings = body_data.get('headings', [])
+                if headings:
+                    print(f"\n📋 Headings ({len(headings)}):")
+                    for heading in headings[:10]:  # Show first 10
+                        print(f"  {heading['level'].upper()}: {heading['text']}")
+                
+                paragraphs = body_data.get('paragraphs', [])
+                if paragraphs:
+                    print(f"\n📝 Sample Paragraphs ({len(paragraphs)}):")
+                    for i, para in enumerate(paragraphs[:3]):  # Show first 3
+                        preview = para[:100] + "..." if len(para) > 100 else para
+                        print(f"  {i+1}. {preview}")
+                
+                print("\n" + "=" * 60)
+                
+                action = input("Actions: 'f' full text | 'h' headings only | 'p' paragraphs only | 'b' back: ").strip().lower()
+                
+                if action == 'f':
+                    return "body"  # Special selector for full body text
+                elif action == 'h':
+                    return "h1, h2, h3, h4, h5, h6"  # Selector for all headings
+                elif action == 'p':
+                    return "p"  # Selector for all paragraphs
+                elif action == 'b':
+                    continue
+                else:
+                    print("❌ Invalid option.")
+                    continue
+                    
+            elif choice == "3":
+                print("📝 Switching to manual selector input...")
+                break
+            else:
+                print("❌ Invalid choice. Enter 1, 2, or 3.")
+
     # Enum-based multiple choice
     if choices:
         print(f"\n📋 Choose a value for '{param}' ({param_desc}):")
@@ -240,14 +513,14 @@ async def run_script():
 
                 print("📋 Fetching available tools...")
                 response = await session.list_tools()
-                available_tools = response.tools
+                all_tools = response.tools
 
-                if not available_tools:
+                if not all_tools:
                     print("❌ No tools available from the server.")
                     return
 
                 while True:
-                    show_tools_menu(available_tools)
+                    visible_tools = show_tools_menu(all_tools)
                     
                     while True:
                         try:
@@ -260,17 +533,21 @@ async def run_script():
                                 print("- Enter tool number to run a tool")
                                 print("- 'q' to quit")
                                 print("- 'h' for this help")
+                                print("- 'i' for info about internal tools")
                                 print("- When selecting elements, use 's' for screenshot, 'p' for page info")
+                                continue
+                            elif selection.lower() == 'i':
+                                show_internal_tools_info()
                                 continue
                             
                             selected_index = int(selection) - 1
-                            if 0 <= selected_index < len(available_tools):
-                                selected_tool = available_tools[selected_index]
+                            if 0 <= selected_index < len(visible_tools):
+                                selected_tool = visible_tools[selected_index]
                                 break
                             else:
-                                print(f"❌ Invalid selection. Enter 1-{len(available_tools)}, 'h', or 'q'.")
+                                print(f"❌ Invalid selection. Enter 1-{len(visible_tools)}, 'h', 'i', or 'q'.")
                         except ValueError:
-                            print("❌ Enter a number, 'h' for help, or 'q' to quit.")
+                            print("❌ Enter a number, 'h' for help, 'i' for info, or 'q' to quit.")
 
                     print(f"\n🔧 CONFIGURING: {selected_tool.name}")
                     print(f"📝 Description: {selected_tool.description}")
