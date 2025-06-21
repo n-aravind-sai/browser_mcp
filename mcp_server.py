@@ -290,6 +290,139 @@ class BrowserSession:
         await self.page.wait_for_selector(selector, timeout=timeout)
         return f"Selector {selector} appeared."
 
+    # Enhanced fill function with better error handling and validation
+    async def fill_enhanced(self, selector: str, value: str):
+        """Enhanced fill function with better validation and error handling"""
+        if not self.page:
+            raise RuntimeError("Browser not started. Call start_browser first.")
+        
+        try:
+            print(f"[DEBUG] Attempting to fill selector: {selector} with value: {value}")
+            
+            # First, try to find the element
+            element = await self.page.query_selector(selector)
+            if not element:
+                print(f"[DEBUG] Element not found with selector: {selector}")
+                return f"Element not found: {selector}"
+            
+            # Check if element is fillable
+            is_fillable = await self.page.evaluate("""
+                (selector) => {
+                    const el = document.querySelector(selector);
+                    if (!el) return { fillable: false, reason: 'Element not found' };
+                    
+                    const tagName = el.tagName.toLowerCase();
+                    const inputType = el.type || 'text';
+                    const isContentEditable = el.contentEditable === 'true';
+                    
+                    // Check if element is visible
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    const visible = rect.width > 0 && rect.height > 0 && 
+                                   style.visibility !== 'hidden' && 
+                                   style.display !== 'none';
+                    
+                    // Check if element is fillable
+                    const fillableTypes = ['text', 'email', 'password', 'search', 'tel', 'url', 
+                                         'number', 'date', 'time', 'datetime-local', 'month', 'week'];
+                    const isFillable = (tagName === 'input' && fillableTypes.includes(inputType)) ||
+                                      tagName === 'textarea' || 
+                                      isContentEditable;
+                    
+                    // Check if element is disabled or readonly
+                    const disabled = el.disabled || el.readOnly;
+                    
+                    return {
+                        fillable: visible && isFillable && !disabled,
+                        visible: visible,
+                        disabled: disabled,
+                        tagName: tagName,
+                        type: inputType,
+                        contentEditable: isContentEditable,
+                        reason: !visible ? 'Not visible' : 
+                               !isFillable ? 'Not fillable element' : 
+                               disabled ? 'Disabled or readonly' : 'OK'
+                    };
+                }
+            """, selector)
+            
+            print(f"[DEBUG] Element check result: {is_fillable}")
+            
+            if not is_fillable.get('fillable', False):
+                # Try to scroll to element first
+                print(f"[DEBUG] Element not fillable, trying to scroll to it...")
+                await element.scroll_into_view_if_needed()
+                await self.page.wait_for_timeout(500)
+                
+                # Check again
+                is_fillable_retry = await self.page.evaluate("""
+                    (selector) => {
+                        const el = document.querySelector(selector);
+                        if (!el) return false;
+                        
+                        const rect = el.getBoundingClientRect();
+                        const style = window.getComputedStyle(el);
+                        return rect.width > 0 && rect.height > 0 && 
+                               style.visibility !== 'hidden' && 
+                               style.display !== 'none' &&
+                               !el.disabled && !el.readOnly;
+                    }
+                """, selector)
+                
+                if not is_fillable_retry:
+                    reason = is_fillable.get('reason', 'Unknown')
+                    return f"Element not fillable: {selector} - {reason}"
+            
+            # Clear existing content first
+            await self.page.fill(selector, "")
+            await self.page.wait_for_timeout(100)
+            
+            # Fill with new value
+            if is_fillable.get('contentEditable'):
+                # For contenteditable elements, use different approach
+                await self.page.evaluate("""
+                    (args) => {
+                        const el = document.querySelector(args.selector);
+                        if (el) {
+                            el.focus();
+                            el.textContent = args.value;
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                            el.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                    }
+                """, {"selector": selector, "value": value})
+            else:
+                await self.page.fill(selector, value)
+            
+            # Trigger input and change events to ensure proper form handling
+            await self.page.evaluate("""
+                (selector) => {
+                    const el = document.querySelector(selector);
+                    if (el) {
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                        el.dispatchEvent(new Event('blur', { bubbles: true }));
+                    }
+                }
+            """, selector)
+            
+            # Verify the value was set
+            actual_value = await self.page.evaluate("""
+                (selector) => {
+                    const el = document.querySelector(selector);
+                    return el ? (el.value || el.textContent || el.innerText) : null;
+                }
+            """, selector)
+            
+            if actual_value == value:
+                return f"Successfully filled {selector} with '{value}'"
+            else:
+                return f"Filled {selector} but value verification failed. Expected: '{value}', Got: '{actual_value}'"
+                
+        except Exception as e:
+            print(f"[DEBUG] Error during fill: {str(e)}")
+            return f"Error filling {selector}: {str(e)}"
+
 # Global browser session
 session = BrowserSession()
 
@@ -324,12 +457,285 @@ async def click_element(selector: str) -> str:
         return await session.click(selector)
     except Exception as e:
         return f"Error clicking {selector}: {str(e)}"
+    
+@mcp.tool()
+async def get_form_elements() -> dict:
+    """Get all form elements (inputs, textareas, selects) with their details and CSS selectors"""
+    if not session.page:
+        raise RuntimeError("Browser not started. Call start_browser first.")
+
+    try:
+        # Wait for page to be ready
+        await session.page.wait_for_timeout(1000)
+        
+        # Get all form elements with improved filtering
+        elements_data = await session.page.evaluate("""
+            () => {
+                const elements = document.querySelectorAll(`
+                    input[type="text"], input[type="email"], input[type="password"], 
+                    input[type="search"], input[type="tel"], input[type="url"], 
+                    input[type="number"], input[type="date"], input[type="time"],
+                    input[type="datetime-local"], input[type="month"], input[type="week"],
+                    input[type="color"], input[type="range"], input[type="file"],
+                    input:not([type]), textarea, select,
+                    [contenteditable="true"], [role="textbox"], [role="searchbox"],
+                    [role="combobox"], [data-input], [data-field], [data-form-field]
+                `);
+                
+                const result = [];
+                const seenSelectors = new Set();
+                
+                for (let el of elements) {
+                    // Skip hidden or disabled elements
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    
+                    if (rect.width <= 0 || rect.height <= 0) continue;
+                    if (style.visibility === 'hidden' || style.display === 'none') continue;
+                    if (el.disabled || el.readOnly) continue;
+                    
+                    // Check if element is in viewport
+                    if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+                    if (rect.right < 0 || rect.left > window.innerWidth) continue;
+                    
+                    // Get element details
+                    const tagName = el.tagName.toLowerCase();
+                    const inputType = el.type || 'text';
+                    const name = el.name || '';
+                    const id = el.id || '';
+                    const placeholder = el.placeholder || '';
+                    const value = el.value || '';
+                    const required = el.required || false;
+                    const maxLength = el.maxLength > 0 ? el.maxLength : null;
+                    
+                    // Get label text
+                    let labelText = '';
+                    if (id) {
+                        const label = document.querySelector(`label[for="${id}"]`);
+                        if (label) labelText = label.textContent?.trim() || '';
+                    }
+                    if (!labelText) {
+                        // Look for parent label
+                        const parentLabel = el.closest('label');
+                        if (parentLabel) labelText = parentLabel.textContent?.trim() || '';
+                    }
+                    if (!labelText) {
+                        // Look for nearby text (aria-label, title, etc.)
+                        labelText = el.getAttribute('aria-label') || 
+                                   el.getAttribute('title') || 
+                                   el.getAttribute('data-label') || '';
+                    }
+                    
+                    // Get improved selector using existing function
+                    const selector = window.MCPGetSelector ? window.MCPGetSelector(el) : 
+                                   (id ? `#${id}` : (name ? `[name="${name}"]` : tagName));
+                    
+                    // Avoid duplicates
+                    const uniqueKey = selector + '|' + inputType + '|' + name;
+                    if (seenSelectors.has(uniqueKey)) continue;
+                    seenSelectors.add(uniqueKey);
+                    
+                    // Get form context
+                    const form = el.closest('form');
+                    const formName = form ? (form.name || form.id || 'unnamed') : 'no-form';
+                    
+                    // Get select options if it's a select element
+                    let options = [];
+                    if (tagName === 'select') {
+                        options = Array.from(el.options).map(opt => ({
+                            value: opt.value,
+                            text: opt.textContent?.trim() || opt.value
+                        }));
+                    }
+                    
+                    result.push({
+                        selector: selector,
+                        tag: tagName,
+                        type: inputType,
+                        name: name,
+                        id: id,
+                        label: labelText,
+                        placeholder: placeholder,
+                        value: value,
+                        required: required,
+                        maxLength: maxLength,
+                        form: formName,
+                        options: options,
+                        isSelect: tagName === 'select',
+                        isTextarea: tagName === 'textarea',
+                        isContentEditable: el.contentEditable === 'true'
+                    });
+                }
+                
+                // Sort by priority: required first, then by form grouping, then by type
+                result.sort((a, b) => {
+                    // Required fields first
+                    if (a.required && !b.required) return -1;
+                    if (!a.required && b.required) return 1;
+                    
+                    // Group by form
+                    if (a.form !== b.form) return a.form.localeCompare(b.form);
+                    
+                    // Sort by input type priority
+                    const typePriority = {
+                        email: 0, text: 1, password: 2, search: 3, tel: 4, url: 5,
+                        number: 6, date: 7, time: 8, textarea: 9, select: 10
+                    };
+                    const aPriority = typePriority[a.type] || 20;
+                    const bPriority = typePriority[b.type] || 20;
+                    
+                    return aPriority - bPriority;
+                });
+                
+                return result;
+            }
+        """)
+        
+        return {"elements": elements_data, "count": len(elements_data)}
+    except Exception as e:
+        return {"error": f"Failed to get form elements: {str(e)}", "elements": []}
+
+# Add the enhanced fill method to BrowserSession
+
+async def fill_enhanced(self, selector: str, value: str):
+    """Enhanced fill function with better validation and error handling"""
+    if not self.page:
+        raise RuntimeError("Browser not started. Call start_browser first.")
+    
+    try:
+        print(f"[DEBUG] Attempting to fill selector: {selector} with value: {value}")
+        
+        # First, try to find the element
+        element = await self.page.query_selector(selector)
+        if not element:
+            print(f"[DEBUG] Element not found with selector: {selector}")
+            return f"Element not found: {selector}"
+        
+        # Check if element is fillable
+        is_fillable = await self.page.evaluate("""
+            (selector) => {
+                const el = document.querySelector(selector);
+                if (!el) return { fillable: false, reason: 'Element not found' };
+                
+                const tagName = el.tagName.toLowerCase();
+                const inputType = el.type || 'text';
+                const isContentEditable = el.contentEditable === 'true';
+                
+                // Check if element is visible
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                const visible = rect.width > 0 && rect.height > 0 && 
+                               style.visibility !== 'hidden' && 
+                               style.display !== 'none';
+                
+                // Check if element is fillable
+                const fillableTypes = ['text', 'email', 'password', 'search', 'tel', 'url', 
+                                     'number', 'date', 'time', 'datetime-local', 'month', 'week'];
+                const isFillable = (tagName === 'input' && fillableTypes.includes(inputType)) ||
+                                  tagName === 'textarea' || 
+                                  isContentEditable;
+                
+                // Check if element is disabled or readonly
+                const disabled = el.disabled || el.readOnly;
+                
+                return {
+                    fillable: visible && isFillable && !disabled,
+                    visible: visible,
+                    disabled: disabled,
+                    tagName: tagName,
+                    type: inputType,
+                    contentEditable: isContentEditable,
+                    reason: !visible ? 'Not visible' : 
+                           !isFillable ? 'Not fillable element' : 
+                           disabled ? 'Disabled or readonly' : 'OK'
+                };
+            }
+        """, selector)
+        
+        print(f"[DEBUG] Element check result: {is_fillable}")
+        
+        if not is_fillable.get('fillable', False):
+            # Try to scroll to element first
+            print(f"[DEBUG] Element not fillable, trying to scroll to it...")
+            await element.scroll_into_view_if_needed()
+            await self.page.wait_for_timeout(500)
+            
+            # Check again
+            is_fillable_retry = await self.page.evaluate("""
+                (selector) => {
+                    const el = document.querySelector(selector);
+                    if (!el) return false;
+                    
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0 && 
+                           style.visibility !== 'hidden' && 
+                           style.display !== 'none' &&
+                           !el.disabled && !el.readOnly;
+                }
+            """, selector)
+            
+            if not is_fillable_retry:
+                reason = is_fillable.get('reason', 'Unknown')
+                return f"Element not fillable: {selector} - {reason}"
+        
+        # Clear existing content first
+        await self.page.fill(selector, "")
+        await self.page.wait_for_timeout(100)
+        
+        # Fill with new value
+        if is_fillable.get('contentEditable'):
+            # For contenteditable elements, use different approach
+            await self.page.evaluate("""
+                (args) => {
+                    const el = document.querySelector(args.selector);
+                    if (el) {
+                        el.focus();
+                        el.textContent = args.value;
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                }
+            """, {"selector": selector, "value": value})
+        else:
+            await self.page.fill(selector, value)
+        
+        # Trigger input and change events to ensure proper form handling
+        await self.page.evaluate("""
+            (selector) => {
+                const el = document.querySelector(selector);
+                if (el) {
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.dispatchEvent(new Event('blur', { bubbles: true }));
+                }
+            }
+        """, selector)
+        
+        # Verify the value was set
+        actual_value = await self.page.evaluate("""
+            (selector) => {
+                const el = document.querySelector(selector);
+                return el ? (el.value || el.textContent || el.innerText) : null;
+            }
+        """, selector)
+        
+        if actual_value == value:
+            return f"Successfully filled {selector} with '{value}'"
+        else:
+            return f"Filled {selector} but value verification failed. Expected: '{value}', Got: '{actual_value}'"
+            
+    except Exception as e:
+        print(f"[DEBUG] Error during fill: {str(e)}")
+        return f"Error filling {selector}: {str(e)}"
+
+BrowserSession.fill_enhanced = fill_enhanced
 
 @mcp.tool()
 async def fill_form(selector: str, value: str) -> str:
-    """Fill a form field with a value"""
+    """Fill a form field with a value using enhanced validation and error handling"""
     try:
-        return await session.fill(selector, value)
+        return await session.fill_enhanced(selector, value)
     except Exception as e:
         return f"Error filling {selector}: {str(e)}"
 

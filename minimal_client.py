@@ -12,7 +12,8 @@ logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s: %(m
 # Tools that should be hidden from the user menu (internal/utility tools)
 HIDDEN_TOOLS = {
     'evaluate_javascript',  # Used internally by get_clickable_elements and other tools
-    'wait_for_element'      # Used internally by click_element and other tools
+    'wait_for_element',     # Used internally by click_element and other tools
+    'get_form_elements'     # Used internally by form filling interface
 }
 
 def cast_input_to_type(value: str, type_hint: str):
@@ -226,6 +227,105 @@ async def get_body_text(session):
     except Exception as e:
         return {"error": f"Failed to get body text: {str(e)}"}
 
+async def get_form_elements_data(session):
+    """Helper function to get form elements data from server"""
+    try:
+        print("\n📝 Fetching form elements from browser...")
+        response = await session.call_tool("get_form_elements")
+        
+        if hasattr(response, "content") and response.content:
+            for content_item in response.content:
+                if hasattr(content_item, "text"):
+                    import json
+                    try:
+                        data = json.loads(content_item.text)
+                        return data.get("elements", []), data.get("error")
+                    except json.JSONDecodeError:
+                        # If it's not JSON, treat as plain text
+                        return [], content_item.text
+        return [], "No response content"
+    except Exception as e:
+        return [], f"Failed to fetch form elements: {str(e)}"
+
+def format_form_element_display(el, index):
+    """Format form element for display in selection menu"""
+    # Get basic info
+    tag = el.get("tag", "unknown").upper()
+    input_type = el.get("type", "text")
+    name = el.get("name", "")
+    label = el.get("label", "")
+    placeholder = el.get("placeholder", "")
+    value = el.get("value", "")
+    required = el.get("required", False)
+    form = el.get("form", "")
+    max_length = el.get("maxLength")
+    
+    # Build display text
+    display_parts = []
+    
+    # Add label or name as primary identifier
+    if label:
+        display_parts.append(f"'{label}'")
+    elif name:
+        display_parts.append(f"[{name}]")
+    elif placeholder:
+        display_parts.append(f'"{placeholder}"')
+    else:
+        display_parts.append("[Unnamed field]")
+    
+    # Add current value if present
+    if value:
+        value_preview = value[:30] + "..." if len(value) > 30 else value
+        display_parts.append(f"= '{value_preview}'")
+    
+    # Build type info
+    type_info = f"{tag}"
+    if tag == "INPUT":
+        type_info += f"[{input_type}]"
+    elif el.get("isSelect"):
+        options_count = len(el.get("options", []))
+        type_info += f"[{options_count} options]"
+    elif el.get("isTextarea"):
+        type_info += "[multiline]"
+    
+    # Build the main display line
+    main_text = " ".join(display_parts)
+    
+    # Add indicators
+    indicators = []
+    if required:
+        indicators.append("REQUIRED")
+    if max_length:
+        indicators.append(f"max:{max_length}")
+    if form and form != "no-form":
+        indicators.append(f"form:{form}")
+    
+    indicator_text = f" ({', '.join(indicators)})" if indicators else ""
+    
+    return f"{index + 1:2d}. [{type_info}] {main_text}{indicator_text}"
+
+def show_form_element_details(el):
+    """Show detailed information about a form element"""
+    print(f"\n📋 Element Details:")
+    print(f"Selector: {el.get('selector', 'Unknown')}")
+    print(f"Tag: {el.get('tag', 'unknown').upper()}")
+    print(f"Type: {el.get('type', 'text')}")
+    print(f"Name: {el.get('name', 'None')}")
+    print(f"ID: {el.get('id', 'None')}")
+    print(f"Label: {el.get('label', 'None')}")
+    print(f"Placeholder: {el.get('placeholder', 'None')}")
+    print(f"Current Value: {el.get('value', 'Empty')}")
+    print(f"Required: {'Yes' if el.get('required') else 'No'}")
+    if el.get('maxLength'):
+        print(f"Max Length: {el.get('maxLength')}")
+    print(f"Form: {el.get('form', 'None')}")
+    
+    # Show select options if applicable
+    if el.get('isSelect') and el.get('options'):
+        print(f"\nAvailable Options:")
+        for i, option in enumerate(el.get('options', [])):
+            print(f"  {i+1}. {option.get('text', '')} (value: {option.get('value', '')})")
+
 def show_internal_tools_info():
     """Show information about hidden internal tools"""
     print("\n" + "=" * 60)
@@ -240,6 +340,11 @@ def show_internal_tools_info():
     print("   • Waits for elements to appear on page")
     print("   • Used by: click_element (when elements aren't immediately available)")
     print("   • Automatically handles dynamic content loading")
+    print()
+    print("📋 get_form_elements:")
+    print("   • Fetches detailed information about form input elements.")
+    print("   • Used by: fill_form (to help you select which field to fill)")
+    print("   • Provides labels, placeholders, and current values of form fields.")
     print()
     print("These tools work behind the scenes to make other tools more reliable!")
     print("=" * 60)
@@ -461,6 +566,172 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                 break
             else:
                 print("❌ Invalid choice. Enter 1, 2, or 3.")
+
+    # Special handling: auto-fetch form elements for fill_form tool
+    elif "fill" in selected_tool.name.lower() and "selector" in param.lower():
+        # First, get page info to ensure we're on a valid page
+        page_info = await get_page_info(session)
+        if "error" not in page_info:
+            print(f"📄 Current page: {page_info.get('title', 'Unknown')}")
+            print(f"🌐 URL: {page_info.get('url', 'Unknown')}")
+            element_info = page_info.get('elements', {})
+            if element_info:
+                print(f"📊 Page elements: {element_info.get('total', 0)} total, {element_info.get('visible', 0)} visible")
+        else:
+            print(f"⚠️ Page info error: {page_info['error']}")
+        
+        # Now get form elements
+        elements, error = await get_form_elements_data(session)
+        
+        if error:
+            print(f"⚠️ Warning while fetching form elements: {error}")
+
+        if elements:
+            print(f"\n📝 Found {len(elements)} form elements:")
+            print("=" * 90)
+            
+            # Group elements by form for better organization
+            form_groups = {}
+            for el in elements:
+                form_name = el.get("form", "no-form")
+                if form_name not in form_groups:
+                    form_groups[form_name] = []
+                form_groups[form_name].append(el)
+            
+            element_index = 0
+            for form_name, form_elements in form_groups.items():
+                if len(form_groups) > 1: # Only show form headers if multiple forms
+                    form_display = "No Form" if form_name == "no-form" else f"Form: {form_name}"
+                    print(f"\n🔲 {form_display}")
+                    print("-" * 50)
+                
+                for el in form_elements:
+                    print(format_form_element_display(el, element_index))
+                    print(f"    Selector: {el.get('selector', 'unknown')}")
+                    element_index += 1
+                    
+                    # Add spacing every 5 items for readability
+                    if element_index < len(elements) and element_index % 5 == 0:
+                        print()
+            
+            print("=" * 90)
+            
+            while True:
+                user_input = input(f"Choose (1-{len(elements)}) | 'd' details | 'm' manual | 's' screenshot | 'r' refresh | 'p' page info: ").strip()
+                
+                if user_input.lower() == 'm':
+                    print("📝 Switching to manual selector input...")
+                    break
+                elif user_input.lower() == 's':
+                    await take_debug_screenshot(session)
+                    continue
+                elif user_input.lower() == 'r':
+                    print("🔄 Refreshing form elements...")
+                    return await get_user_input_for_param(session, selected_tool, param, definition, is_required)
+                elif user_input.lower() == 'p':
+                    page_info = await get_page_info(session)
+                    print(f"\n📄 Page Information:")
+                    print(f"Title: {page_info.get('title', 'Unknown')}")
+                    print(f"URL: {page_info.get('url', 'Unknown')}")
+                    print(f"Ready State: {page_info.get('ready_state', 'Unknown')}")
+                    if 'visible_text_preview' in page_info:
+                        print(f"Text Preview: {page_info['visible_text_preview'][:200]}...")
+                    continue
+                elif user_input.lower() == 'd':
+                    # Show details for a specific element
+                    detail_input = input(f"Show details for element (1-{len(elements)}): ").strip()
+                    try:
+                        detail_index = int(detail_input) - 1
+                        if 0 <= detail_index < len(elements):
+                            show_form_element_details(elements[detail_index])
+                        else:
+                            print(f"❌ Invalid selection. Enter 1-{len(elements)}.")
+                    except ValueError:
+                        print("❌ Please enter a valid number.")
+                    continue
+                
+                try:
+                    selected = int(user_input) - 1
+                    if 0 <= selected < len(elements):
+                        chosen_element = elements[selected]
+                        print(f"✅ Selected: {chosen_element.get('label', chosen_element.get('name', 'Unnamed field'))}")
+                        print(f"🎯 Selector: {chosen_element['selector']}")
+                        
+                        # Show additional context for the selected element
+                        if chosen_element.get('isSelect'):
+                            print("📋 This is a select/dropdown element")
+                            if chosen_element.get('options'):
+                                print("Available options:", [opt.get('text', opt.get('value', '')) for opt in chosen_element.get('options', [])])
+                        elif chosen_element.get('type') in ['email', 'password', 'tel', 'url']:
+                            print(f"📧 This is a {chosen_element.get('type')} input field")
+                        elif chosen_element.get('maxLength'):
+                            print(f"📏 Maximum length: {chosen_element.get('maxLength')} characters")
+                        
+                        return chosen_element["selector"]
+                    else:
+                        print(f"❌ Invalid selection. Enter 1-{len(elements)} or a command.")
+                except ValueError:
+                    print("❌ Please enter a valid number or command.")
+        else:
+            print("⚠️ No form elements found on the current page.")
+            
+            # Offer debugging options
+            while True:
+                debug_choice = input("Debug options: 's' screenshot | 'p' page info | 'm' manual input | 'r' retry: ").strip().lower()
+                
+                if debug_choice == "s":
+                    await take_debug_screenshot(session)
+                elif debug_choice == "p":
+                    page_info = await get_page_info(session)
+                    print(f"\n📄 Page Information:")
+                    for key, value in page_info.items():
+                        print(f"{key}: {value}")
+                elif debug_choice == "m":
+                    print("📝 Switching to manual selector input...")
+                    break
+                elif debug_choice == "r":
+                    print("🔄 Retrying form element detection...")
+                    return await get_user_input_for_param(session, selected_tool, param, definition, is_required)
+                else:
+                    print("❌ Invalid option. Choose 's', 'p', 'm', or 'r'.")
+
+    # Special handling for the 'value' parameter when filling forms
+    elif "fill" in selected_tool.name.lower() and "value" in param.lower():
+        # If we have a previously selected element, we might want to provide context
+        # This could be enhanced to remember the selected element from the selector parameter
+        
+        # Get input with validation hints based on common input types
+        prompt = f"\n📝 Enter the value to fill"
+        if param_desc:
+            prompt += f" ({param_desc})"
+        
+        # Add helpful hints
+        print("\n💡 Filling Tips:")
+        print("• For email fields: user@example.com")
+        print("• For password fields: Use a secure password")
+        print("• For select dropdowns: Enter the visible option text or value")
+        print("• For dates: Use format shown in placeholder (if any)")
+        print("• For numbers: Enter numeric values only")
+        
+        if default_val is not None:
+            prompt += f" [default: {default_val}]"
+        if is_required:
+            prompt += " [REQUIRED]"
+        prompt += ": "
+
+        while True:
+            user_input = input(prompt).strip()
+            if user_input:
+                try:
+                    return cast_input_to_type(user_input, type_hint)
+                except ValueError as e:
+                    print(f"❌ Error: {e}")
+            elif default_val is not None:
+                return cast_input_to_type(str(default_val), type_hint)
+            elif not is_required:
+                return None
+            else:
+                print("❌ This field is required. Please enter a value.")
 
     # Enum-based multiple choice
     if choices:
