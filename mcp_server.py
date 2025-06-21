@@ -20,6 +20,14 @@ class BrowserSession:
             self.browser = await self.playwright.chromium.launch(headless=headless)
         if self.page is None:
             self.page = await self.browser.new_page()
+            await self.page.add_init_script("""
+                window.MCPGetSelector = function(el) {
+                    if (el.id) return "#" + el.id;
+                    if (el.className && typeof el.className === 'string')
+                        return el.tagName.toLowerCase() + "." + el.className.trim().replace(/\\s+/g, ".");
+                    return el.tagName.toLowerCase();
+                };
+            """)
         return "Browser started."
 
     async def stop(self):
@@ -151,5 +159,33 @@ async def wait_for_element(selector: str, timeout: int = 10000) -> str:
     except Exception as e:
         return f"Error waiting for {selector}: {str(e)}"
 
-if __name__ == "__main__":
+@mcp.tool()
+async def get_clickable_elements() -> dict:
+    """Get all clickable elements with visible text and CSS selectors"""
+    if not session.page:
+        raise RuntimeError("Browser not started. Call start_browser first.")
+
+    try:
+        elements = await session.page.query_selector_all("a, button, [role='button'], [onclick], input[type='submit']")
+        result = []
+
+        for el in elements:
+            try:
+                text = (await el.inner_text()).strip()
+                selector = await session.page.evaluate("el => window.MCPGetSelector(el)", el)
+                result.append({"text": text or "[No text]", "selector": selector})
+            except Exception:
+                continue
+
+        return {"elements": result}
+    except Exception as e:
+        return {"error": f"Failed to get clickable elements: {str(e)}"}
+
+# Run the MCP server
+try:
     mcp.run(transport="stdio")
+except KeyboardInterrupt:
+    asyncio.run(session.stop())
+except Exception as e:
+    print(f"Server error: {e}")
+    asyncio.run(session.stop())
