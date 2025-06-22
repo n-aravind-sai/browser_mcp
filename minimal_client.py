@@ -40,7 +40,7 @@ def show_tools_menu(available_tools):
     for idx, tool in enumerate(visible_tools):
         print(f"{idx + 1:2d}. {tool.name:<20} | {tool.description}")
     print("=" * 60)
-    print("Commands: [tool number] | 'q' to quit | 'h' for help | 'i' for info")
+    print("Commands: [tool number] | 'h' for help | 'i' for info")  # <-- Removed 'q' to quit from here
     
     return visible_tools  # Return filtered list
 
@@ -358,7 +358,6 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
 
     # Special handling: auto-fetch clickable elements if relevant
     if "click" in selected_tool.name.lower() and "selector" in param.lower():
-        # First, get page info to ensure we're on a valid page
         page_info = await get_page_info(session)
         if "error" not in page_info:
             print(f"📄 Current page: {page_info.get('title', 'Unknown')}")
@@ -368,40 +367,31 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                 print(f"📊 Page elements: {element_info.get('total', 0)} total, {element_info.get('visible', 0)} visible, {element_info.get('clickable', 0)} clickable")
         else:
             print(f"⚠️ Page info error: {page_info['error']}")
-        
-        # Now get clickable elements
         elements, error = await get_clickable_elements_data(session)
-        
         if error:
             print(f"⚠️ Warning while fetching elements: {error}")
 
         if elements:
             print(f"\n📌 Found {len(elements)} clickable elements:")
             print("=" * 80)
-            
             for i, el in enumerate(elements):
                 text = el.get("text", "[No text]").strip()
                 selector = el.get("selector", "<unknown>")
                 tag = el.get("tag", "unknown")
                 elem_type = el.get("type")
                 href = el.get("href")
-                
-                # Format element display
                 type_info = f" ({elem_type})" if elem_type else ""
                 href_info = f" → {href}" if href else ""
-                
                 print(f"{i + 1:2d}. [{tag.upper()}{type_info}] {text}{href_info}")
                 print(f"    Selector: {selector}")
-                
-                # Add spacing every 5 items for readability
                 if i < len(elements) - 1 and (i + 1) % 5 == 0:
                     print()
-            
             print("=" * 80)
-            
             while True:
-                user_input = input(f"Choose (1-{len(elements)}) | 'm' manual | 's' screenshot | 'r' refresh | 'p' page info: ").strip()
-                
+                user_input = input(f"Choose (1-{len(elements)}) | 'm' manual | 's' screenshot | 'r' refresh | 'p' page info [or 'q' to quit]: ").strip()
+                if user_input.lower() == 'q':
+                    print("👋 Exiting...")
+                    return
                 if user_input.lower() == 'm':
                     print("📝 Switching to manual selector input...")
                     break
@@ -420,7 +410,6 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                     if 'visible_text_preview' in page_info:
                         print(f"Text Preview: {page_info['visible_text_preview'][:200]}...")
                     continue
-                
                 try:
                     selected = int(user_input) - 1
                     if 0 <= selected < len(elements):
@@ -434,11 +423,11 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                     print("❌ Please enter a valid number or command.")
         else:
             print("⚠️ No clickable elements found on the current page.")
-            
-            # Offer debugging options
             while True:
-                debug_choice = input("Debug options: 's' screenshot | 'p' page info | 'm' manual input | 'r' retry: ").strip().lower()
-                
+                debug_choice = input("Debug options: 's' screenshot | 'p' page info | 'm' manual input | 'r' retry [or 'q' to quit]: ").strip().lower()
+                if debug_choice == 'q':
+                    print("👋 Exiting...")
+                    return
                 if debug_choice == "s":
                     await take_debug_screenshot(session)
                 elif debug_choice == "p":
@@ -463,8 +452,10 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
         print("3. ✏️  Manual selector input")
         
         while True:
-            choice = input("Choose option (1-3): ").strip()
-            
+            choice = input("Choose option (1-3) [or 'q' to quit]: ").strip()
+            if choice.lower() == 'q':
+                print("👋 Exiting...")
+                return
             if choice == "1":
                 # Get text elements
                 elements, error = await get_text_elements_data(session)
@@ -495,14 +486,15 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                     print("=" * 80)
                     
                     while True:
-                        user_input = input(f"Choose (1-{len(elements)}) | 'b' back | 's' screenshot: ").strip()
-                        
+                        user_input = input(f"Choose (1-{len(elements)}) | 'b' back | 's' screenshot [or 'q' to quit]: ").strip()
+                        if user_input.lower() == 'q':
+                            print("👋 Exiting...")
+                            return
                         if user_input.lower() == 'b':
                             break
                         elif user_input.lower() == 's':
                             await take_debug_screenshot(session)
                             continue
-                        
                         try:
                             selected = int(user_input) - 1
                             if 0 <= selected < len(elements):
@@ -518,7 +510,6 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                     print("⚠️ No text elements found on the current page.")
                     print("Falling back to manual input...")
                     break
-                    
             elif choice == "2":
                 # Get body text
                 body_data = await get_body_text(session)
@@ -547,8 +538,11 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                 
                 print("\n" + "=" * 60)
                 
-                action = input("Actions: 'f' full text | 'h' headings only | 'p' paragraphs only | 'b' back: ").strip().lower()
+                action = input("Actions: 'f' full text | 'h' headings only | 'p' paragraphs only | 'b' back [or 'q' to quit]: ").strip().lower()
                 
+                if action == 'q':
+                    print("👋 Exiting...")
+                    return
                 if action == 'f':
                     return "body"  # Special selector for full body text
                 elif action == 'h':
@@ -560,7 +554,6 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                 else:
                     print("❌ Invalid option.")
                     continue
-                    
             elif choice == "3":
                 print("📝 Switching to manual selector input...")
                 break
@@ -585,40 +578,33 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
         
         if error:
             print(f"⚠️ Warning while fetching form elements: {error}")
-
         if elements:
             print(f"\n📝 Found {len(elements)} form elements:")
             print("=" * 90)
-            
-            # Group elements by form for better organization
             form_groups = {}
             for el in elements:
                 form_name = el.get("form", "no-form")
                 if form_name not in form_groups:
                     form_groups[form_name] = []
                 form_groups[form_name].append(el)
-            
             element_index = 0
             for form_name, form_elements in form_groups.items():
-                if len(form_groups) > 1: # Only show form headers if multiple forms
+                if len(form_groups) > 1:
                     form_display = "No Form" if form_name == "no-form" else f"Form: {form_name}"
                     print(f"\n🔲 {form_display}")
                     print("-" * 50)
-                
                 for el in form_elements:
                     print(format_form_element_display(el, element_index))
                     print(f"    Selector: {el.get('selector', 'unknown')}")
                     element_index += 1
-                    
-                    # Add spacing every 5 items for readability
                     if element_index < len(elements) and element_index % 5 == 0:
                         print()
-            
             print("=" * 90)
-            
             while True:
-                user_input = input(f"Choose (1-{len(elements)}) | 'd' details | 'm' manual | 's' screenshot | 'r' refresh | 'p' page info: ").strip()
-                
+                user_input = input(f"Choose (1-{len(elements)}) | 'd' details | 'm' manual | 's' screenshot | 'r' refresh | 'p' page info [or 'q' to quit]: ").strip()
+                if user_input.lower() == 'q':
+                    print("👋 Exiting...")
+                    return
                 if user_input.lower() == 'm':
                     print("📝 Switching to manual selector input...")
                     break
@@ -638,8 +624,10 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                         print(f"Text Preview: {page_info['visible_text_preview'][:200]}...")
                     continue
                 elif user_input.lower() == 'd':
-                    # Show details for a specific element
-                    detail_input = input(f"Show details for element (1-{len(elements)}): ").strip()
+                    detail_input = input(f"Show details for element (1-{len(elements)}) [or 'q' to quit]: ").strip()
+                    if detail_input.lower() == 'q':
+                        print("👋 Exiting...")
+                        return
                     try:
                         detail_index = int(detail_input) - 1
                         if 0 <= detail_index < len(elements):
@@ -649,15 +637,12 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                     except ValueError:
                         print("❌ Please enter a valid number.")
                     continue
-                
                 try:
                     selected = int(user_input) - 1
                     if 0 <= selected < len(elements):
                         chosen_element = elements[selected]
                         print(f"✅ Selected: {chosen_element.get('label', chosen_element.get('name', 'Unnamed field'))}")
                         print(f"🎯 Selector: {chosen_element['selector']}")
-                        
-                        # Show additional context for the selected element
                         if chosen_element.get('isSelect'):
                             print("📋 This is a select/dropdown element")
                             if chosen_element.get('options'):
@@ -666,7 +651,6 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                             print(f"📧 This is a {chosen_element.get('type')} input field")
                         elif chosen_element.get('maxLength'):
                             print(f"📏 Maximum length: {chosen_element.get('maxLength')} characters")
-                        
                         return chosen_element["selector"]
                     else:
                         print(f"❌ Invalid selection. Enter 1-{len(elements)} or a command.")
@@ -674,11 +658,11 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                     print("❌ Please enter a valid number or command.")
         else:
             print("⚠️ No form elements found on the current page.")
-            
-            # Offer debugging options
             while True:
-                debug_choice = input("Debug options: 's' screenshot | 'p' page info | 'm' manual input | 'r' retry: ").strip().lower()
-                
+                debug_choice = input("Debug options: 's' screenshot | 'p' page info | 'm' manual input | 'r' retry [or 'q' to quit]: ").strip().lower()
+                if debug_choice == 'q':
+                    print("👋 Exiting...")
+                    return
                 if debug_choice == "s":
                     await take_debug_screenshot(session)
                 elif debug_choice == "p":
@@ -697,30 +681,25 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
 
     # Special handling for the 'value' parameter when filling forms
     elif "fill" in selected_tool.name.lower() and "value" in param.lower():
-        # If we have a previously selected element, we might want to provide context
-        # This could be enhanced to remember the selected element from the selector parameter
-        
-        # Get input with validation hints based on common input types
         prompt = f"\n📝 Enter the value to fill"
         if param_desc:
             prompt += f" ({param_desc})"
-        
-        # Add helpful hints
         print("\n💡 Filling Tips:")
         print("• For email fields: user@example.com")
         print("• For password fields: Use a secure password")
         print("• For select dropdowns: Enter the visible option text or value")
         print("• For dates: Use format shown in placeholder (if any)")
         print("• For numbers: Enter numeric values only")
-        
         if default_val is not None:
             prompt += f" [default: {default_val}]"
         if is_required:
             prompt += " [REQUIRED]"
-        prompt += ": "
-
+        prompt += " [or 'q' to quit]: "
         while True:
             user_input = input(prompt).strip()
+            if user_input.lower() == 'q':
+                print("👋 Exiting...")
+                return
             if user_input:
                 try:
                     return cast_input_to_type(user_input, type_hint)
@@ -733,14 +712,17 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
             else:
                 print("❌ This field is required. Please enter a value.")
 
-    # Enum-based multiple choice
     if choices:
         print(f"\n📋 Choose a value for '{param}' ({param_desc}):")
         for i, choice in enumerate(choices):
             print(f"{i + 1}. {choice}")
         while True:
+            selected = input(f"Select a value (1-{len(choices)}) [or 'q' to quit]: ")
+            if selected.lower() == 'q':
+                print("👋 Exiting...")
+                return
             try:
-                selected = int(input(f"Select a value (1-{len(choices)}): ")) - 1
+                selected = int(selected) - 1
                 if 0 <= selected < len(choices):
                     return choices[selected]
                 else:
@@ -748,7 +730,6 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
             except ValueError:
                 print("❌ Please enter a number.")
 
-    # Manual input fallback
     prompt = f"\n📝 Enter '{param}'"
     if param_desc:
         prompt += f" ({param_desc})"
@@ -756,10 +737,12 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
         prompt += f" [default: {default_val}]"
     if is_required:
         prompt += " [REQUIRED]"
-    prompt += ": "
-
+    prompt += " [or 'q' to quit]: "
     while True:
         user_input = input(prompt).strip()
+        if user_input.lower() == 'q':
+            print("👋 Exiting...")
+            return
         if user_input:
             try:
                 return cast_input_to_type(user_input, type_hint)
@@ -774,30 +757,25 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
 
 async def run_script():
     server_params = StdioServerParameters(command="python", args=["mcp_server.py"], env=None)
-
     try:
         async with stdio_client(server_params) as (read, write):
             async with ClientSession(read, write) as session:
                 print("🚀 Starting Enhanced MCP Browser Automation Client...")
                 print("⏳ Initializing MCP session...")
                 await session.initialize()
-
                 print("📋 Fetching available tools...")
                 response = await session.list_tools()
                 all_tools = response.tools
-
                 if not all_tools:
                     print("❌ No tools available from the server.")
                     return
-
                 while True:
                     visible_tools = show_tools_menu(all_tools)
-                    
                     while True:
                         try:
-                            selection = input("\nSelect tool: ").strip()
+                            selection = input("\nSelect tool [or 'q' to quit]: ").strip()
                             if selection.lower() == 'q':
-                                print("👋 Goodbye!")
+                                print("👋 Exiting...")
                                 return
                             elif selection.lower() == 'h':
                                 print("\n📖 Help:")
@@ -810,7 +788,6 @@ async def run_script():
                             elif selection.lower() == 'i':
                                 show_internal_tools_info()
                                 continue
-                            
                             selected_index = int(selection) - 1
                             if 0 <= selected_index < len(visible_tools):
                                 selected_tool = visible_tools[selected_index]
@@ -819,56 +796,54 @@ async def run_script():
                                 print(f"❌ Invalid selection. Enter 1-{len(visible_tools)}, 'h', 'i', or 'q'.")
                         except ValueError:
                             print("❌ Enter a number, 'h' for help, 'i' for info, or 'q' to quit.")
-
                     print(f"\n🔧 CONFIGURING: {selected_tool.name}")
                     print(f"📝 Description: {selected_tool.description}")
                     print("-" * 50)
-
                     args = {}
                     schema = selected_tool.inputSchema
-
                     if isinstance(schema, dict) and schema:
                         if "properties" in schema:
                             properties = schema.get("properties", {})
                             required = schema.get("required", [])
-
                             if not properties:
                                 print("✅ This tool requires no parameters.")
                             else:
                                 for param, definition in properties.items():
                                     is_required = param in required
                                     value = await get_user_input_for_param(session, selected_tool, param, definition, is_required)
+                                    if value is None:
+                                        return
                                     if value is not None:
                                         args[param] = value
                         else:
-                            # Handle other schema formats
                             for param, definition in schema.items():
                                 if isinstance(definition, dict):
                                     is_required = definition.get("required", True)
                                     value = await get_user_input_for_param(session, selected_tool, param, definition, is_required)
+                                    if value is None:
+                                        return
                                     if value is not None:
                                         args[param] = value
                                 else:
-                                    value = input(f"\n📝 Enter '{param}': ").strip()
+                                    value = input(f"\n📝 Enter '{param}' [or 'q' to quit]: ").strip()
+                                    if value.lower() == 'q':
+                                        print("👋 Exiting...")
+                                        return
                                     if value:
                                         args[param] = value
                     else:
                         print("✅ This tool requires no parameters.")
-
                     print(f"\n⚡ EXECUTING: {selected_tool.name}")
                     if args:
                         print(f"📊 Arguments: {args}")
                     print("-" * 50)
-
                     try:
                         result = await session.call_tool(selected_tool.name, arguments=args)
-
                         print("📋 RESULT:")
                         if hasattr(result, 'content') and result.content:
                             for content_item in result.content:
                                 text = getattr(content_item, "text", None)
                                 if text is not None:
-                                    # Try to format JSON output nicely
                                     try:
                                         import json
                                         data = json.loads(text)
@@ -879,13 +854,13 @@ async def run_script():
                                     print(content_item)
                         else:
                             print("✅ Tool executed successfully (no output)")
-
                     except Exception as e:
                         print(f"❌ Error executing tool: {e}")
                         logging.error(f"Tool execution error: {e}")
-
-                    input("\n🔄 Press Enter to continue...")
-
+                    cont = input("\n🔄 Press Enter to continue... [or 'q' to quit]: ")
+                    if cont.lower() == 'q':
+                        print("👋 Exiting...")
+                        return
     except Exception as e:
         print(f"❌ Error connecting to MCP server: {e}")
         logging.error(f"MCP connection error: {e}")
