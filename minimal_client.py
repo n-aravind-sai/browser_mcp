@@ -873,6 +873,8 @@ async def browse_and_click_link(session):
             print(f"{idx:3d}. {txt} – {href} (in {ctxtTag}: \"{ctxtText}\")")
         else:
             print(f"{idx:3d}. {txt} – {href}")
+        if (idx + 1) % 5 == 0:
+            print()
     print("=" * 100)
     while True:
         user_input = input("Select a link by number or text [or 'q' to quit]: ").strip()

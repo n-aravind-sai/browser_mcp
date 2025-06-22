@@ -305,7 +305,7 @@ class BrowserSession:
                 print(f"[DEBUG] Element not found with selector: {selector}")
                 return f"Element not found: {selector}"
             
-            # Check if element is fillable
+            # Check if element is fillable and get more info
             is_fillable = await self.page.evaluate("""
                 (selector) => {
                     const el = document.querySelector(selector);
@@ -314,6 +314,9 @@ class BrowserSession:
                     const tagName = el.tagName.toLowerCase();
                     const inputType = el.type || 'text';
                     const isContentEditable = el.contentEditable === 'true';
+                    const isSelect = tagName === 'select';
+                    const isCheckbox = tagName === 'input' && inputType === 'checkbox';
+                    const isRadio = tagName === 'input' && inputType === 'radio';
                     
                     // Check if element is visible
                     const rect = el.getBoundingClientRect();
@@ -327,10 +330,12 @@ class BrowserSession:
                                          'number', 'date', 'time', 'datetime-local', 'month', 'week'];
                     const isFillable = (tagName === 'input' && fillableTypes.includes(inputType)) ||
                                       tagName === 'textarea' || 
-                                      isContentEditable;
+                                      isContentEditable || isSelect || isCheckbox || isRadio;
                     
                     // Check if element is disabled or readonly
                     const disabled = el.disabled || el.readOnly;
+                    const maxlength = el.maxLength || null;
+                    const placeholder = el.placeholder || null;
                     
                     return {
                         fillable: visible && isFillable && !disabled,
@@ -339,6 +344,11 @@ class BrowserSession:
                         tagName: tagName,
                         type: inputType,
                         contentEditable: isContentEditable,
+                        isSelect,
+                        isCheckbox,
+                        isRadio,
+                        maxlength,
+                        placeholder,
                         reason: !visible ? 'Not visible' : 
                                !isFillable ? 'Not fillable element' : 
                                disabled ? 'Disabled or readonly' : 'OK'
@@ -359,7 +369,6 @@ class BrowserSession:
                     (selector) => {
                         const el = document.querySelector(selector);
                         if (!el) return false;
-                        
                         const rect = el.getBoundingClientRect();
                         const style = window.getComputedStyle(el);
                         return rect.width > 0 && rect.height > 0 && 
@@ -373,13 +382,18 @@ class BrowserSession:
                     reason = is_fillable.get('reason', 'Unknown')
                     return f"Element not fillable: {selector} - {reason}"
         
-            # Clear existing content first
-            await self.page.fill(selector, "")
-            await self.page.wait_for_timeout(100)
+            # Warn if value exceeds maxlength
+            maxlength = is_fillable.get('maxlength')
+            if maxlength and maxlength > 0 and len(value) > maxlength:
+                print(f"[DEBUG] Warning: Value length exceeds maxlength ({maxlength}) for {selector}")
+            
+            # Clear existing content first (if not checkbox/radio/select)
+            if not (is_fillable.get('isCheckbox') or is_fillable.get('isRadio') or is_fillable.get('isSelect')):
+                await self.page.fill(selector, "")
+                await self.page.wait_for_timeout(100)
             
             # Fill with new value
             if is_fillable.get('contentEditable'):
-                # For contenteditable elements, use different approach
                 await self.page.evaluate("""
                     (args) => {
                         const el = document.querySelector(args.selector);
@@ -391,6 +405,21 @@ class BrowserSession:
                         }
                     }
                 """, {"selector": selector, "value": value})
+            elif is_fillable.get('isSelect'):
+                await self.page.select_option(selector, value)
+            elif is_fillable.get('isCheckbox') or is_fillable.get('isRadio'):
+                # For checkbox/radio, set checked state based on value
+                checked = value.lower() in ("1", "true", "yes", "on", "checked")
+                await self.page.evaluate("""
+                    (args) => {
+                        const el = document.querySelector(args.selector);
+                        if (el) {
+                            el.checked = args.checked;
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                            el.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                    }
+                """, {"selector": selector, "checked": checked})
             else:
                 await self.page.fill(selector, value)
             
@@ -406,24 +435,33 @@ class BrowserSession:
                 }
             """, selector)
             
-            # Verify the value was set
+            # Verify the value was set (normalize for comparison)
             actual_value = await self.page.evaluate("""
                 (selector) => {
                     const el = document.querySelector(selector);
-                    return el ? (el.value || el.textContent || el.innerText) : null;
+                    if (!el) return null;
+                    if (el.type === "checkbox" || el.type === "radio") return el.checked ? "checked" : "unchecked";
+                    if (el.tagName.toLowerCase() === "select") return el.value;
+                    return el.value || el.textContent || el.innerText;
                 }
             """, selector)
             
-            if actual_value == value:
+            expected_value = value.strip()
+            actual_value_str = str(actual_value).strip() if actual_value is not None else ""
+            if is_fillable.get('isCheckbox') or is_fillable.get('isRadio'):
+                expected_value = "checked" if value.lower() in ("1", "true", "yes", "on", "checked") else "unchecked"
+            
+            if actual_value_str == expected_value:
                 return f"Successfully filled {selector} with '{value}'"
             else:
-                return f"Filled {selector} but value verification failed. Expected: '{value}', Got: '{actual_value}'"
+                print(f"[DEBUG] Value verification failed. Expected: '{expected_value}', Got: '{actual_value_str}'")
+                return f"Filled {selector} but value verification failed. Expected: '{expected_value}', Got: '{actual_value_str}'"
                 
         except Exception as e:
             print(f"[DEBUG] Error during fill: {str(e)}")
             return f"Error filling {selector}: {str(e)}"
 
-# Global browser session
+# Add this line:
 session = BrowserSession()
 
 @mcp.tool()
@@ -682,6 +720,69 @@ async def list_links_with_context() -> dict:
         return {"links": anchors}
     except Exception as e:
         return {"error": f"Failed to list links: {str(e)}"}
+
+@mcp.tool()
+async def get_form_elements() -> dict:
+    """Get all form input elements with details for form filling."""
+    if not session.page:
+        raise RuntimeError("Browser not started. Call start_browser first.")
+    try:
+        elements = await session.page.evaluate("""
+            () => {
+                const inputs = Array.from(document.querySelectorAll('input, textarea, select'));
+                return inputs.map((el, idx) => {
+                    const tag = el.tagName.toLowerCase();
+                    const type = el.type || (tag === "textarea" ? "textarea" : (tag === "select" ? "select" : "text"));
+                    const name = el.name || "";
+                    const id = el.id || "";
+                    const label = (() => {
+                        if (el.labels && el.labels.length > 0) return el.labels[0].innerText.trim();
+                        if (el.getAttribute("aria-label")) return el.getAttribute("aria-label");
+                        if (el.placeholder) return el.placeholder;
+                        return "";
+                    })();
+                    const placeholder = el.placeholder || "";
+                    const value = el.value || "";
+                    const required = !!el.required;
+                    const maxLength = el.maxLength > 0 ? el.maxLength : null;
+                    const form = el.form ? (el.form.name || el.form.id || "no-form") : "no-form";
+                    const isSelect = tag === "select";
+                    const isTextarea = tag === "textarea";
+                    const isCheckbox = type === "checkbox";
+                    const isRadio = type === "radio";
+                    let options = [];
+                    if (isSelect) {
+                        options = Array.from(el.options).map(opt => ({
+                            value: opt.value,
+                            text: opt.text,
+                            selected: opt.selected
+                        }));
+                    }
+                    return {
+                        index: idx,
+                        tag,
+                        type,
+                        name,
+                        id,
+                        label,
+                        placeholder,
+                        value,
+                        required,
+                        maxLength,
+                        form,
+                        isSelect,
+                        isTextarea,
+                        isCheckbox,
+                        isRadio,
+                        options,
+                        selector: window.MCPGetSelector ? window.MCPGetSelector(el) : ""
+                    };
+                });
+            }
+        """)
+        return {"elements": elements}
+    except Exception as e:
+        return {"error": f"Failed to get form elements: {str(e)}", "elements": []}
 
 # Run the MCP server
 try:
