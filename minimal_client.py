@@ -41,7 +41,7 @@ def show_tools_menu(available_tools):
     for idx, tool in enumerate(visible_tools):
         print(f"{idx + 1:2d}. {tool.name:<20} | {tool.description}")
     print("=" * 60)
-    print("Commands: [tool number] | 'h' for help | 'i' for info")  # <-- Removed 'q' to quit from here
+    print("Commands: [tool number] | 'l' browse links | 'q' to quit | 'h' for help | 'i' for info")  # <-- Removed 'q' to quit from here
     
     return visible_tools  # Return filtered list
 
@@ -848,6 +848,57 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
         else:
             print("❌ This field is required. Please enter a value.")
 
+async def browse_and_click_link(session):
+    """List all links with context, let user pick one, and click it."""
+    response = await session.call_tool("list_links_with_context")
+    links = []
+    if hasattr(response, "content") and response.content:
+        import json
+        for content_item in response.content:
+            if hasattr(content_item, "text"):
+                data = json.loads(content_item.text)
+                links = data.get("links", [])
+    if not links:
+        print("No links found on the page.")
+        return
+    print("\n🔗 All links on page:")
+    print("=" * 100)
+    for link in links:
+        idx = link["index"]
+        txt = link["text"]
+        href = link["href"]
+        ctxtTag = link.get("containerTag")
+        ctxtText = link.get("context")
+        if ctxtTag and ctxtText:
+            print(f"{idx:3d}. {txt} – {href} (in {ctxtTag}: \"{ctxtText}\")")
+        else:
+            print(f"{idx:3d}. {txt} – {href}")
+    print("=" * 100)
+    while True:
+        user_input = input("Select a link by number or text [or 'q' to quit]: ").strip()
+        if user_input.lower() == 'q':
+            print("👋 Exiting link selection...")
+            return
+        selected_index = None
+        if user_input.isdigit():
+            selected_index = int(user_input)
+        else:
+            for link in links:
+                if user_input.lower() in link["text"].lower():
+                    selected_index = link["index"]
+                    break
+        if selected_index:
+            selected_link = next((l for l in links if l["index"] == selected_index), None)
+            if not selected_link:
+                print("❌ No link found for that selection.")
+                continue
+            print(f"Clicking link: {selected_link['text']} ({selected_link['href']})")
+            result = await session.call_tool("click_element", {"selector": selected_link["selector"], "by": "xpath"})
+            print(f"Result: {getattr(result, 'content', result)}")
+            return
+        else:
+            print("❌ No matching link found for your selection.")
+
 async def run_script():
     server_params = StdioServerParameters(command="python", args=["mcp_server.py"], env=None)
     try:
@@ -880,6 +931,9 @@ async def run_script():
                                 continue
                             elif selection.lower() == 'i':
                                 show_internal_tools_info()
+                                continue
+                            elif selection.lower() == 'l':
+                                await browse_and_click_link(session)
                                 continue
                             selected_index = int(selection) - 1
                             if 0 <= selected_index < len(visible_tools):

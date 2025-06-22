@@ -451,30 +451,24 @@ async def navigate_to(url: str) -> str:
         return f"Error navigating to {url}: {str(e)}"
 
 @mcp.tool()
-async def click_element(selector: str) -> str:
-    """Click on an element using CSS selector"""
-    try:
-        return await session.click(selector)
-    except Exception as e:
-        return f"Error clicking {selector}: {str(e)}"
-    
-@mcp.tool()
-async def click_element_by_index(selector: str, index: int = 0) -> str:
-    """Click the Nth element matching selector, with JS fallback for links."""
+async def click_element(selector: str, by: str = "css") -> str:
+    """Click on an element using CSS or XPath selector."""
     if not session.page:
         raise RuntimeError("Browser not started. Call start_browser first.")
     try:
-        elements = await session.page.query_selector_all(selector)
-        if not elements or index >= len(elements):
-            return f"No element at index {index} for selector {selector}"
-        element = elements[index]
+        if by == "xpath":
+            element = await session.page.query_selector(f'xpath={selector}')
+        else:
+            element = await session.page.query_selector(selector)
+        if not element:
+            return f"Element not found: {selector} (by={by})"
         await element.scroll_into_view_if_needed()
         await element.focus()
         try:
             await element.click(timeout=5000, force=True)
-            return f"Clicked {selector} at index {index}"
+            return f"Clicked {selector} (by={by})"
         except Exception as e:
-            # Fallback to JS click and navigation for links
+            # JS fallback: try to click closest anchor
             await session.page.evaluate("""
                 (el) => {
                     el.click();
@@ -482,282 +476,9 @@ async def click_element_by_index(selector: str, index: int = 0) -> str:
                     if(anchor && anchor.href) { window.location.href = anchor.href; }
                 }
             """, element)
-            return f"Clicked {selector} at index {index} with JS fallback"
+            return f"Clicked {selector} (by={by}) with JS fallback"
     except Exception as e:
-        return f"Error clicking {selector} at index {index}: {str(e)}"
-
-@mcp.tool()
-async def get_form_elements() -> dict:
-    """Get all form elements (inputs, textareas, selects) with their details and CSS selectors"""
-    if not session.page:
-        raise RuntimeError("Browser not started. Call start_browser first.")
-
-    try:
-        # Wait for page to be ready
-        await session.page.wait_for_timeout(1000)
-        
-        # Get all form elements with improved filtering
-        elements_data = await session.page.evaluate("""
-            () => {
-                const elements = document.querySelectorAll(`
-                    input[type="text"], input[type="email"], input[type="password"], 
-                    input[type="search"], input[type="tel"], input[type="url"], 
-                    input[type="number"], input[type="date"], input[type="time"],
-                    input[type="datetime-local"], input[type="month"], input[type="week"],
-                    input[type="color"], input[type="range"], input[type="file"],
-                    input:not([type]), textarea, select,
-                    [contenteditable="true"], [role="textbox"], [role="searchbox"],
-                    [role="combobox"], [data-input], [data-field], [data-form-field]
-                `);
-                
-                const result = [];
-                const seenSelectors = new Set();
-                
-                for (let el of elements) {
-                    // Skip hidden or disabled elements
-                    const style = window.getComputedStyle(el);
-                    const rect = el.getBoundingClientRect();
-                    
-                    if (rect.width <= 0 || rect.height <= 0) continue;
-                    if (style.visibility === 'hidden' || style.display === 'none') continue;
-                    if (el.disabled || el.readOnly) continue;
-                    
-                    // Check if element is in viewport
-                    if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
-                    if (rect.right < 0 || rect.left > window.innerWidth) continue;
-                    
-                    // Get element details
-                    const tagName = el.tagName.toLowerCase();
-                    const inputType = el.type || 'text';
-                    const name = el.name || '';
-                    const id = el.id || '';
-                    const placeholder = el.placeholder || '';
-                    const value = el.value || '';
-                    const required = el.required || false;
-                    const maxLength = el.maxLength > 0 ? el.maxLength : null;
-                    
-                    // Get label text
-                    let labelText = '';
-                    if (id) {
-                        const label = document.querySelector(`label[for="${id}"]`);
-                        if (label) labelText = label.textContent?.trim() || '';
-                    }
-                    if (!labelText) {
-                        // Look for parent label
-                        const parentLabel = el.closest('label');
-                        if (parentLabel) labelText = parentLabel.textContent?.trim() || '';
-                    }
-                    if (!labelText) {
-                        // Look for nearby text (aria-label, title, etc.)
-                        labelText = el.getAttribute('aria-label') || 
-                                   el.getAttribute('title') || 
-                                   el.getAttribute('data-label') || '';
-                    }
-                    
-                    // Get improved selector using existing function
-                    const selector = window.MCPGetSelector ? window.MCPGetSelector(el) : 
-                                   (id ? `#${id}` : (name ? `[name="${name}"]` : tagName));
-                    
-                    // Avoid duplicates
-                    const uniqueKey = selector + '|' + inputType + '|' + name;
-                    if (seenSelectors.has(uniqueKey)) continue;
-                    seenSelectors.add(uniqueKey);
-                    
-                    // Get form context
-                    const form = el.closest('form');
-                    const formName = form ? (form.name || form.id || 'unnamed') : 'no-form';
-                    
-                    // Get select options if it's a select element
-                    let options = [];
-                    if (tagName === 'select') {
-                        options = Array.from(el.options).map(opt => ({
-                            value: opt.value,
-                            text: opt.textContent?.trim() || opt.value
-                        }));
-                    }
-                    
-                    result.push({
-                        selector: selector,
-                        tag: tagName,
-                        type: inputType,
-                        name: name,
-                        id: id,
-                        label: labelText,
-                        placeholder: placeholder,
-                        value: value,
-                        required: required,
-                        maxLength: maxLength,
-                        form: formName,
-                        options: options,
-                        isSelect: tagName === 'select',
-                        isTextarea: tagName === 'textarea',
-                        isContentEditable: el.contentEditable === 'true'
-                    });
-                }
-                
-                // Sort by priority: required first, then by form grouping, then by type
-                result.sort((a, b) => {
-                    // Required fields first
-                    if (a.required && !b.required) return -1;
-                    if (!a.required && b.required) return 1;
-                    
-                    // Group by form
-                    if (a.form !== b.form) return a.form.localeCompare(b.form);
-                    
-                    // Sort by input type priority
-                    const typePriority = {
-                        email: 0, text: 1, password: 2, search: 3, tel: 4, url: 5,
-                        number: 6, date: 7, time: 8, textarea: 9, select: 10
-                    };
-                    const aPriority = typePriority[a.type] || 20;
-                    const bPriority = typePriority[b.type] || 20;
-                    
-                    return aPriority - bPriority;
-                });
-                
-                return result;
-            }
-        """)
-        
-        return {"elements": elements_data, "count": len(elements_data)}
-    except Exception as e:
-        return {"error": f"Failed to get form elements: {str(e)}", "elements": []}
-
-# Add the enhanced fill method to BrowserSession
-
-async def fill_enhanced(self, selector: str, value: str):
-    """Enhanced fill function with better validation and error handling"""
-    if not self.page:
-        raise RuntimeError("Browser not started. Call start_browser first.")
-    
-    try:
-        print(f"[DEBUG] Attempting to fill selector: {selector} with value: {value}")
-        
-        # First, try to find the element
-        element = await self.page.query_selector(selector)
-        if not element:
-            print(f"[DEBUG] Element not found with selector: {selector}")
-            return f"Element not found: {selector}"
-        
-        # Check if element is fillable
-        is_fillable = await self.page.evaluate("""
-            (selector) => {
-                const el = document.querySelector(selector);
-                if (!el) return { fillable: false, reason: 'Element not found' };
-                
-                const tagName = el.tagName.toLowerCase();
-                const inputType = el.type || 'text';
-                const isContentEditable = el.contentEditable === 'true';
-                
-                // Check if element is visible
-                const rect = el.getBoundingClientRect();
-                const style = window.getComputedStyle(el);
-                const visible = rect.width > 0 && rect.height > 0 && 
-                               style.visibility !== 'hidden' && 
-                               style.display !== 'none';
-                
-                // Check if element is fillable
-                const fillableTypes = ['text', 'email', 'password', 'search', 'tel', 'url', 
-                                     'number', 'date', 'time', 'datetime-local', 'month', 'week'];
-                const isFillable = (tagName === 'input' && fillableTypes.includes(inputType)) ||
-                                  tagName === 'textarea' || 
-                                  isContentEditable;
-                
-                // Check if element is disabled or readonly
-                const disabled = el.disabled || el.readOnly;
-                
-                return {
-                    fillable: visible && isFillable && !disabled,
-                    visible: visible,
-                    disabled: disabled,
-                    tagName: tagName,
-                    type: inputType,
-                    contentEditable: isContentEditable,
-                    reason: !visible ? 'Not visible' : 
-                           !isFillable ? 'Not fillable element' : 
-                           disabled ? 'Disabled or readonly' : 'OK'
-                };
-            }
-        """, selector)
-        
-        print(f"[DEBUG] Element check result: {is_fillable}")
-        
-        if not is_fillable.get('fillable', False):
-            # Try to scroll to element first
-            print(f"[DEBUG] Element not fillable, trying to scroll to it...")
-            await element.scroll_into_view_if_needed()
-            await self.page.wait_for_timeout(500)
-            
-            # Check again
-            is_fillable_retry = await self.page.evaluate("""
-                (selector) => {
-                    const el = document.querySelector(selector);
-                    if (!el) return false;
-                    
-                    const rect = el.getBoundingClientRect();
-                    const style = window.getComputedStyle(el);
-                    return rect.width > 0 && rect.height > 0 && 
-                           style.visibility !== 'hidden' && 
-                           style.display !== 'none' &&
-                           !el.disabled && !el.readOnly;
-                }
-            """, selector)
-            
-            if not is_fillable_retry:
-                reason = is_fillable.get('reason', 'Unknown')
-                return f"Element not fillable: {selector} - {reason}"
-        
-        # Clear existing content first
-        await self.page.fill(selector, "")
-        await self.page.wait_for_timeout(100)
-        
-        # Fill with new value
-        if is_fillable.get('contentEditable'):
-            # For contenteditable elements, use different approach
-            await self.page.evaluate("""
-                (args) => {
-                    const el = document.querySelector(args.selector);
-                    if (el) {
-                        el.focus();
-                        el.textContent = args.value;
-                        el.dispatchEvent(new Event('input', { bubbles: true }));
-                        el.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                }
-            """, {"selector": selector, "value": value})
-        else:
-            await self.page.fill(selector, value)
-        
-        # Trigger input and change events to ensure proper form handling
-        await self.page.evaluate("""
-            (selector) => {
-                const el = document.querySelector(selector);
-                if (el) {
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                    el.dispatchEvent(new Event('blur', { bubbles: true }));
-                }
-            }
-        """, selector)
-        
-        # Verify the value was set
-        actual_value = await self.page.evaluate("""
-            (selector) => {
-                const el = document.querySelector(selector);
-                return el ? (el.value || el.textContent || el.innerText) : null;
-            }
-        """, selector)
-        
-        if actual_value == value:
-            return f"Successfully filled {selector} with '{value}'"
-        else:
-            return f"Filled {selector} but value verification failed. Expected: '{value}', Got: '{actual_value}'"
-            
-    except Exception as e:
-        print(f"[DEBUG] Error during fill: {str(e)}")
-        return f"Error filling {selector}: {str(e)}"
-
-BrowserSession.fill_enhanced = fill_enhanced
+        return f"Error clicking {selector} (by={by}): {str(e)}"
 
 @mcp.tool()
 async def fill_form(selector: str, value: str) -> str:
@@ -916,6 +637,51 @@ async def get_page_info() -> dict:
         }
     except Exception as e:
         return {"error": f"Failed to get page info: {str(e)}"}
+
+@mcp.tool()
+async def list_links_with_context() -> dict:
+    """List all <a> links on the page with text, href, and surrounding context."""
+    if not session.page:
+        raise RuntimeError("Browser not started. Call start_browser first.")
+    try:
+        anchors = await session.page.evaluate("""
+            () => {
+                const anchors = Array.from(document.querySelectorAll('a'));
+                return anchors.map((anchor, index) => {
+                    const text = anchor.innerText.trim() || "(no text)";
+                    const href = anchor.getAttribute('href') || "";
+                    let container = anchor.closest('h1,h2,h3,h4,h5,h6,p,li,div');
+                    let contextText = "";
+                    let containerTag = "";
+                    if (container) {
+                        containerTag = container.tagName;
+                        contextText = container.innerText.trim();
+                    }
+                    if (contextText.length > 100) {
+                        const idx = contextText.indexOf(text);
+                        if (idx >= 0) {
+                            const snippetRadius = 50;
+                            const start = Math.max(0, idx - snippetRadius);
+                            const end = Math.min(contextText.length, idx + text.length + snippetRadius);
+                            contextText = (start > 0 ? "…" : "") + contextText.substring(start, end) + (end < contextText.length ? "…" : "");
+                        } else {
+                            contextText = contextText.substring(0, 100) + "…";
+                        }
+                    }
+                    return {
+                        index: index + 1,
+                        text: text,
+                        href: href,
+                        containerTag: containerTag || null,
+                        context: contextText || null,
+                        selector: `(//a)[${index + 1}]`
+                    };
+                });
+            }
+        """)
+        return {"links": anchors}
+    except Exception as e:
+        return {"error": f"Failed to list links: {str(e)}"}
 
 # Run the MCP server
 try:
