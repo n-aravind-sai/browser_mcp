@@ -95,7 +95,7 @@ The client automatically handles:
 | `start_browser` | Initialize browser session | Begin automation |
 | `stop_browser` | Close browser session | Clean shutdown |
 | `navigate_to` | Navigate to URL | Visit web pages |
-| `click_element` | Click on elements | Button clicks, links |
+| `click_element` | Click on elements | Button clicks, links |(space for improvement )
 | `fill_form` | Fill form fields | Data entry |
 | `extract_text` | Extract text content | Data scraping |
 | `take_screenshot` | Capture screenshots | Debugging, documentation |

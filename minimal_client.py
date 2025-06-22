@@ -459,12 +459,12 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                 type_info = f" ({elem_type})" if elem_type else ""
                 href_info = f" → {href}" if href else ""
                 print(f"{i + 1:2d}. [{tag.upper()}{type_info}] {text}{href_info}")
-                print(f"    Selector: {selector}")
+                print(f"    Selector: {selector}   [Index: {i}]")
                 if i < len(elements) - 1 and (i + 1) % 5 == 0:
                     print()
             print("=" * 80)
             while True:
-                user_input = input(f"Choose (1-{len(elements)}) | 'm' manual | 's' screenshot | 'r' refresh | 'p' page info [or 'q' to quit]: ").strip()
+                user_input = input(f"Choose (1-{len(elements)}) | 'm' manual | 'i' index click | 's' screenshot | 'r' refresh | 'p' page info [or 'q' to quit]: ").strip()
                 if user_input.lower() == 'q':
                     print("👋 Exiting...")
                     return
@@ -485,6 +485,19 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                     print(f"Ready State: {page_info.get('ready_state', 'Unknown')}")
                     if 'visible_text_preview' in page_info:
                         print(f"Preview: {page_info['visible_text_preview'][:200]}...")
+                    continue
+                elif user_input.lower() == 'i':
+                    idx = input(f"Enter index (0-{len(elements)-1}): ").strip()
+                    try:
+                        idx = int(idx)
+                        chosen_element = elements[idx]
+                        print(f"✅ Index-based click: {chosen_element['selector']} at index {idx}")
+                        # Call the new tool
+                        result = await session.call_tool("click_element_by_index", {"selector": chosen_element["selector"], "index": idx})
+                        print(f"Result: {getattr(result, 'content', result)}")
+                        return chosen_element["selector"]
+                    except Exception as e:
+                        print(f"❌ Invalid index: {e}")
                     continue
                 try:
                     selected = int(user_input) - 1

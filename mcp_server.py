@@ -372,7 +372,7 @@ class BrowserSession:
                 if not is_fillable_retry:
                     reason = is_fillable.get('reason', 'Unknown')
                     return f"Element not fillable: {selector} - {reason}"
-            
+        
             # Clear existing content first
             await self.page.fill(selector, "")
             await self.page.wait_for_timeout(100)
@@ -458,6 +458,34 @@ async def click_element(selector: str) -> str:
     except Exception as e:
         return f"Error clicking {selector}: {str(e)}"
     
+@mcp.tool()
+async def click_element_by_index(selector: str, index: int = 0) -> str:
+    """Click the Nth element matching selector, with JS fallback for links."""
+    if not session.page:
+        raise RuntimeError("Browser not started. Call start_browser first.")
+    try:
+        elements = await session.page.query_selector_all(selector)
+        if not elements or index >= len(elements):
+            return f"No element at index {index} for selector {selector}"
+        element = elements[index]
+        await element.scroll_into_view_if_needed()
+        await element.focus()
+        try:
+            await element.click(timeout=5000, force=True)
+            return f"Clicked {selector} at index {index}"
+        except Exception as e:
+            # Fallback to JS click and navigation for links
+            await session.page.evaluate("""
+                (el) => {
+                    el.click();
+                    let anchor = el.closest('a');
+                    if(anchor && anchor.href) { window.location.href = anchor.href; }
+                }
+            """, element)
+            return f"Clicked {selector} at index {index} with JS fallback"
+    except Exception as e:
+        return f"Error clicking {selector} at index {index}: {str(e)}"
+
 @mcp.tool()
 async def get_form_elements() -> dict:
     """Get all form elements (inputs, textareas, selects) with their details and CSS selectors"""
@@ -789,70 +817,38 @@ async def get_clickable_elements() -> dict:
                     [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"],
                     [onclick], [onmousedown], [onmouseup], [onkeydown], [onkeyup],
                     .btn, .button, .link, .clickable, .click, [data-action], [data-click], 
-                    [data-href], [data-url], [data-target], .nav-link, .menu-item,
-                    select, textarea, input[type="text"], input[type="email"], 
-                    input[type="password"], input[type="search"], input[type="tel"],
-                    input[type="url"], input[type="number"], input[type="checkbox"],
-                    input[type="radio"], [contenteditable="true"], [tabindex]:not([tabindex="-1"])
+                    [data-href], [data-url], [data-target], .nav-link, .menu-item
                 `);
-                
                 const result = [];
                 const seenSelectors = new Set();
-                
                 for (let el of elements) {
-                    // Use our improved visibility and clickability check
                     if (!window.MCPIsClickable(el)) continue;
-                    
-                    // Get text content with fallbacks
-                    let textContent = el.textContent?.trim() || '';
-                    if (!textContent) {
-                        textContent = el.value || el.placeholder || el.getAttribute('aria-label') || 
-                                    el.getAttribute('title') || el.getAttribute('alt') || '[No text]';
+                    let selector = "";
+                    if (el.id) {
+                        selector = "#" + el.id;
+                    } else if (el.tagName === "A" && el.innerText && el.innerText.trim().length < 40) {
+                        selector = `a:has-text("${el.innerText.trim()}")`;
+                    } else if (el.tagName === "BUTTON" && el.innerText && el.innerText.trim().length < 40) {
+                        selector = `button:has-text("${el.innerText.trim()}")`;
+                    } else if (el.tagName === "A" && el.getAttribute("href")) {
+                        selector = `a[href="${el.getAttribute("href")}"]`;
+                    } else {
+                        const tag = el.tagName.toLowerCase();
+                        const classes = el.className ? el.className.split(/\\s+/).join('.') : '';
+                        selector = classes ? `${tag}.${classes}` : tag;
                     }
-                    
-                    // Truncate long text
-                    if (textContent.length > 80) {
-                        textContent = textContent.substring(0, 77) + '...';
-                    }
-                    
-                    // Get improved selector
-                    const selector = window.MCPGetSelector(el);
-                    
-                    // Avoid duplicates - but allow duplicates if text is different
+                    const textContent = el.textContent?.trim() || '';
                     const uniqueKey = selector + '|' + textContent;
                     if (seenSelectors.has(uniqueKey)) continue;
                     seenSelectors.add(uniqueKey);
-                    
-                    // Get element info
-                    const tagName = el.tagName.toLowerCase();
-                    const elementType = el.type || null;
-                    const href = el.href || el.getAttribute('href');
-                    
                     result.push({
                         text: textContent,
                         selector: selector,
-                        tag: tagName,
-                        type: elementType,
-                        href: href && href.length > 50 ? href.substring(0, 47) + '...' : href
+                        tag: el.tagName.toLowerCase(),
+                        type: el.type || null,
+                        href: el.href || el.getAttribute('href')
                     });
                 }
-                
-                // Sort by priority: buttons first, then links, then others
-                result.sort((a, b) => {
-                    const getPriority = (elem) => {
-                        if (elem.tag === 'button') return 0;
-                        if (elem.tag === 'a') return 1;
-                        if (elem.tag === 'input') return 2;
-                        return 3;
-                    };
-                    
-                    const priorityDiff = getPriority(a) - getPriority(b);
-                    if (priorityDiff !== 0) return priorityDiff;
-                    
-                    // Secondary sort by text length (shorter first)
-                    return a.text.length - b.text.length;
-                });
-                
                 return result;
             }
         """)
