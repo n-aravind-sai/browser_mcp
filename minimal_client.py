@@ -45,60 +45,138 @@ def show_tools_menu(available_tools):
     
     return visible_tools  # Return filtered list
 
-def parse_tool_response(response):
-    """Parse a tool response and return (data, error) tuple."""
-    if hasattr(response, "content") and response.content:
-        for content_item in response.content:
-            if hasattr(content_item, "text"):
-                try:
-                    data = json.loads(content_item.text)
-                    return data, None
-                except json.JSONDecodeError:
-                    return None, content_item.text
-    return None, "No response content"
-
 async def get_clickable_elements_data(session):
-    """Helper function to get clickable elements data from server. Returns (elements, error)."""
+    """Helper function to get clickable elements data from server"""
     try:
         print("\n🔍 Fetching clickable elements from browser...")
         response = await session.call_tool("get_clickable_elements")
-        data, error = parse_tool_response(response)
-        if data:
-            return data.get("elements", []), data.get("error")
-        return [], error
+        
+        if hasattr(response, "content") and response.content:
+            for content_item in response.content:
+                if hasattr(content_item, "text"):
+                    try:
+                        data = json.loads(content_item.text)
+                        return data.get("elements", []), data.get("error")
+                    except json.JSONDecodeError:
+                        # If it's not JSON, treat as plain text
+                        return [], content_item.text
+        return [], "No response content"
     except Exception as e:
         return [], f"Failed to fetch elements: {str(e)}"
 
+async def click_element_with_force(session, selector):
+    """Try normal click, then force click, then navigation fallback for <a> tags."""
+    try:
+        result = await session.call_tool("click_element", {"selector": selector})
+        if hasattr(result, "content") and result.content:
+            for content_item in result.content:
+                text = getattr(content_item, "text", "")
+                if "not clickable" in text.lower() or "not found" in text.lower():
+                    print(f"⚠️ {text}")
+                    while True:
+                        choice = input("Try force click? (y/N), 'n' for navigation fallback, or 'b' to go back: ").strip().lower()
+                        if choice == "b":
+                            return "_back_"
+                        if choice == "y":
+                            js = f"""
+(() => {{
+    const el = document.querySelector({json.dumps(selector)});
+    if (!el) return "Element not found for force click";
+    el.scrollIntoView({{block: "center"}});
+    el.focus();
+    // Try native click
+    try {{
+        el.click();
+    }} catch (e) {{
+        // Ignore
+    }}
+    // Dispatch pointer and mouse events for better compatibility
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(type => {{
+        const evt = new MouseEvent(type, {{
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            buttons: 1
+        }});
+        el.dispatchEvent(evt);
+    }});
+    return "Force click events dispatched";
+}})()
+"""
+                            force_result = await session.call_tool("evaluate_javascript", {"expression": js})
+                            if hasattr(force_result, "content") and force_result.content:
+                                for fc in force_result.content:
+                                    fc_text = getattr(fc, 'text', fc)
+                                    print(f"⚡ Force click result: {fc_text}")
+                                    if "not found" in str(fc_text).lower():
+                                        back2 = input("Force click failed. Type 'b' to go back or Enter to continue: ").strip().lower()
+                                        if back2 == "b":
+                                            return "_back_"
+                            else:
+                                print("⚡ Force click attempted (no output)")
+                            return
+                        if choice == "n":
+                            # Navigation fallback for <a> tags
+                            nav_js = f"""
+(() => {{
+    const el = document.querySelector({json.dumps(selector)});
+    if (!el) return "Element not found for navigation fallback";
+    if (el.tagName === 'A' && el.href) {{
+        window.location.href = el.href;
+        return "Navigated via window.location.href";
+    }}
+    return "Element is not a link or has no href";
+}})()
+"""
+                            nav_result = await session.call_tool("evaluate_javascript", {"expression": nav_js})
+                            if hasattr(nav_result, "content") and nav_result.content:
+                                for navc in nav_result.content:
+                                    print(f"🌐 Navigation fallback: {getattr(navc, 'text', navc)}")
+                            return
+                        if choice == "" or choice == "n":
+                            return
+                    return
+                print(text)
+        else:
+            print("✅ Click executed (no output)")
+    except Exception as e:
+        print(f"❌ Error clicking element: {e}")
+
 async def take_debug_screenshot(session):
-    """Helper function to take a screenshot for debugging. Returns (True, None) on success, (False, error) on failure."""
+    """Helper function to take a screenshot for debugging"""
     try:
         response = await session.call_tool("take_screenshot", {"path": "debug_screenshot.png"})
-        data, error = parse_tool_response(response)
-        if data or (hasattr(response, "content") and response.content):
+        if hasattr(response, "content") and response.content:
             for content_item in response.content:
                 if hasattr(content_item, "text"):
                     print(f"📸 {content_item.text}")
-                    return True, None
-        return False, error or "No screenshot response"
+                    return True
+        return False
     except Exception as e:
         print(f"❌ Failed to take screenshot: {e}")
-        return False, f"Failed to take screenshot: {e}"
+        return False
 
 async def get_page_info(session):
-    """Helper function to get current page information. Returns (data, error)."""
+    """Helper function to get current page information"""
     try:
         response = await session.call_tool("get_page_info")
-        data, error = parse_tool_response(response)
-        if data:
-            return data, None
-        return {}, error
+        if hasattr(response, "content") and response.content:
+            for content_item in response.content:
+                if hasattr(content_item, "text"):
+                    try:
+                        data = json.loads(content_item.text)
+                        return data
+                    except json.JSONDecodeError:
+                        return {"error": "Failed to parse page info"}
+        return {"error": "No page info available"}
     except Exception as e:
-        return {}, f"Failed to get page info: {str(e)}"
+        return {"error": f"Failed to get page info: {str(e)}"}
 
 async def get_text_elements_data(session):
-    """Helper function to get text elements data from server. Returns (elements, error)."""
+    """Helper function to get text elements data from server"""
     try:
         print("\n🔍 Fetching text elements from browser...")
+        # Use JavaScript evaluation to get text-containing elements
         response = await session.call_tool("evaluate_javascript", {
             "expression": """
             (() => {
@@ -107,26 +185,33 @@ async def get_text_elements_data(session):
                     article, section, main, aside, header, footer, nav,
                     [role="heading"], [role="text"], [role="article"]
                 `);
-
+                
                 const result = [];
                 const seenText = new Set();
-
+                
                 for (let el of elements) {
                     const text = el.textContent?.trim();
-                    if (!text || text.length < 5) continue;
+                    if (!text || text.length < 5) continue; // Skip very short text
+                    
+                    // Skip if text is too long (likely contains child elements)
                     if (text.length > 500) continue;
+                    
+                    // Skip duplicates
                     if (seenText.has(text)) continue;
                     seenText.add(text);
-
+                    
+                    // Check if element is visible
                     const rect = el.getBoundingClientRect();
                     const style = window.getComputedStyle(el);
                     if (rect.width <= 0 || rect.height <= 0) continue;
                     if (style.visibility === 'hidden' || style.display === 'none') continue;
-
+                    
+                    // Get selector (reuse the existing function if available)
                     let selector;
                     if (window.MCPGetSelector) {
                         selector = window.MCPGetSelector(el);
                     } else {
+                        // Fallback selector logic
                         if (el.id) {
                             selector = "#" + el.id;
                         } else if (el.className && typeof el.className === 'string') {
@@ -136,7 +221,7 @@ async def get_text_elements_data(session):
                             selector = el.tagName.toLowerCase();
                         }
                     }
-
+                    
                     result.push({
                         text: text,
                         selector: selector,
@@ -144,68 +229,95 @@ async def get_text_elements_data(session):
                         length: text.length
                     });
                 }
-
+                
+                // Sort by tag priority and text length
                 result.sort((a, b) => {
                     const tagPriority = { h1: 0, h2: 1, h3: 2, h4: 3, h5: 4, h6: 5, p: 6, div: 10 };
                     const aPriority = tagPriority[a.tag] || 20;
                     const bPriority = tagPriority[b.tag] || 20;
+                    
                     if (aPriority !== bPriority) return aPriority - bPriority;
-                    return a.length - b.length;
+                    return a.length - b.length; // Shorter text first within same tag type
                 });
-
-                return result.slice(0, 50);
+                
+                return result.slice(0, 50); // Limit to 50 elements
             })()
             """
         })
-        data, error = parse_tool_response(response)
-        if data:
-            return data, None
-        return [], error
+        
+        if hasattr(response, "content") and response.content:
+            for content_item in response.content:
+                if hasattr(content_item, "text"):
+                    try:
+                        data = json.loads(content_item.text)
+                        return data, None
+                    except json.JSONDecodeError:
+                        return [], content_item.text
+        return [], "No response content"
     except Exception as e:
         return [], f"Failed to fetch text elements: {str(e)}"
 
 async def get_body_text(session):
-    """Helper function to get all body text from the browser. Returns (data, error)."""
+    """Helper function to get all body text"""
     try:
         response = await session.call_tool("evaluate_javascript", {
             "expression": """
             (() => {
                 const body = document.body;
                 if (!body) return { error: "No body element found" };
+                
+                // Get clean text content
                 const text = body.innerText || body.textContent || "";
+                
+                // Also get structured text by headings
                 const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).map(h => ({
                     level: h.tagName.toLowerCase(),
                     text: h.textContent?.trim()
                 })).filter(h => h.text);
-                const paragraphs = Array.from(document.querySelectorAll('p')).map(p =>
+                
+                // Get paragraphs
+                const paragraphs = Array.from(document.querySelectorAll('p')).map(p => 
                     p.textContent?.trim()
                 ).filter(p => p && p.length > 10);
+                
                 return {
                     fullText: text.trim(),
                     wordCount: text.trim().split(/\\s+/).length,
                     charCount: text.length,
-                    headings: headings.slice(0, 20),
-                    paragraphs: paragraphs.slice(0, 10)
+                    headings: headings.slice(0, 20), // Limit headings
+                    paragraphs: paragraphs.slice(0, 10) // Limit paragraphs
                 };
             })()
             """
         })
-        data, error = parse_tool_response(response)
-        if data:
-            return data, None
-        return {}, error
+        
+        if hasattr(response, "content") and response.content:
+            for content_item in response.content:
+                if hasattr(content_item, "text"):
+                    try:
+                        return json.loads(content_item.text)
+                    except json.JSONDecodeError:
+                        return {"error": "Failed to parse body text"}
+        return {"error": "No response content"}
     except Exception as e:
-        return {}, f"Failed to get body text: {str(e)}"
+        return {"error": f"Failed to get body text: {str(e)}"}
 
 async def get_form_elements_data(session):
-    """Helper function to get form elements data from server. Returns (elements, error)."""
+    """Helper function to get form elements data from server"""
     try:
         print("\n📝 Fetching form elements from browser...")
         response = await session.call_tool("get_form_elements")
-        data, error = parse_tool_response(response)
-        if data:
-            return data.get("elements", []), data.get("error")
-        return [], error
+        
+        if hasattr(response, "content") and response.content:
+            for content_item in response.content:
+                if hasattr(content_item, "text"):
+                    try:
+                        data = json.loads(content_item.text)
+                        return data.get("elements", []), data.get("error")
+                    except json.JSONDecodeError:
+                        # If it's not JSON, treat as plain text
+                        return [], content_item.text
+        return [], "No response content"
     except Exception as e:
         return [], f"Failed to fetch form elements: {str(e)}"
 
@@ -325,8 +437,10 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
             print(f"📄 Current page: {page_info.get('title', 'Unknown')}")
             print(f"🌐 URL: {page_info.get('url', 'Unknown')}")
             element_info = page_info.get('elements', {})
-            if element_info:
+            if isinstance(element_info, dict):
                 print(f"📊 Page elements: {element_info.get('total', 0)} total, {element_info.get('visible', 0)} visible, {element_info.get('clickable', 0)} clickable")
+            elif element_info:
+                print(f"📊 Page elements info: {element_info}")
         else:
             print(f"⚠️ Page info error: {page_info['error']}")
         elements, error = await get_clickable_elements_data(session)
@@ -370,7 +484,7 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                     print(f"URL: {page_info.get('url', 'Unknown')}")
                     print(f"Ready State: {page_info.get('ready_state', 'Unknown')}")
                     if 'visible_text_preview' in page_info:
-                        print(f"Text Preview: {page_info['visible_text_preview'][:200]}...")
+                        print(f"Preview: {page_info['visible_text_preview'][:200]}...")
                     continue
                 try:
                     selected = int(user_input) - 1
@@ -378,6 +492,10 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                         chosen_element = elements[selected]
                         print(f"✅ Selected: {chosen_element['text']}")
                         print(f"🎯 Selector: {chosen_element['selector']}")
+                        # Try click with force/back option
+                        click_result = await click_element_with_force(session, chosen_element["selector"])
+                        if click_result == "_back_":
+                            continue
                         return chosen_element["selector"]
                     else:
                         print(f"❌ Invalid selection. Enter 1-{len(elements)} or a command.")
@@ -583,7 +701,7 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
                     print(f"URL: {page_info.get('url', 'Unknown')}")
                     print(f"Ready State: {page_info.get('ready_state', 'Unknown')}")
                     if 'visible_text_preview' in page_info:
-                        print(f"Text Preview: {page_info['visible_text_preview'][:200]}...")
+                        print(f"Preview: {page_info['visible_text_preview'][:200]}...")
                     continue
                 elif user_input.lower() == 'd':
                     detail_input = input(f"Show details for element (1-{len(elements)}) [or 'q' to quit]: ").strip()
@@ -807,7 +925,6 @@ async def run_script():
                                 text = getattr(content_item, "text", None)
                                 if text is not None:
                                     try:
-                                        import json
                                         data = json.loads(text)
                                         print(json.dumps(data, indent=2))
                                     except (json.JSONDecodeError, TypeError):

@@ -178,7 +178,7 @@ class BrowserSession:
             # Try to wait for network to be idle, but don't fail if it takes too long
             try:
                 await self.page.wait_for_load_state('networkidle', timeout=10000)
-            except:
+            except Exception:
                 pass  # Continue even if network doesn't become idle
             
             # Scroll to trigger lazy loading
