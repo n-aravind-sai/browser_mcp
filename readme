@@ -1,6 +1,6 @@
 # MCP Browser Automation
 
-A powerful browser automation system built with the Model Context Protocol (MCP) and Playwright, featuring an intelligent interactive client for web scraping, testing, and automation tasks.
+A powerful browser automation system built with the Model Context Protocol (MCP) and Playwright, featuring both an intelligent AI-powered client and a manual interactive client for web scraping, testing, and automation tasks.
 
 ## Features
 
@@ -18,7 +18,14 @@ A powerful browser automation system built with the Model Context Protocol (MCP)
 - **Visibility Detection**: Smart visibility checking that accounts for viewport and overlapping elements
 - **Text Element Browsing**: Specialized text content discovery for extraction tasks
 
-### 🔧 Interactive Client Features
+### 🤖 AI-Powered Client Features
+- **Natural Language Control**: Use Gemini AI to control browser with conversational commands
+- **Intelligent Task Planning**: AI automatically plans and executes multi-step automation tasks
+- **Context-Aware Operations**: AI understands current page state and suggests appropriate actions
+- **Error Recovery**: Smart error handling with alternative approaches suggested by AI
+- **Conversation History**: Maintains context across multiple interactions
+
+### 🔧 Manual Interactive Client Features
 - **Menu-Driven Interface**: User-friendly tool selection and parameter input
 - **Smart Parameter Assistance**: Auto-fetch clickable/text elements for relevant tools
 - **Visual Debugging**: Screenshot capture and page info display
@@ -30,6 +37,7 @@ A powerful browser automation system built with the Model Context Protocol (MCP)
 ### Prerequisites
 - Python 3.8+
 - Node.js (for Playwright browser installation)
+- Google Gemini API key (for AI features)
 
 ### Setup
 
@@ -53,6 +61,7 @@ A powerful browser automation system built with the Model Context Protocol (MCP)
    ```bash
    cp .env.example .env
    # Edit .env with your configuration
+   # Add your Gemini API key: GEMINI_API_KEY=your_api_key_here
    ```
 
 ### Required Dependencies
@@ -63,6 +72,7 @@ dotenv
 mcp
 playwright
 fastmcp
+google-generativeai  # For AI features
 ```
 
 ## Usage
@@ -74,10 +84,43 @@ fastmcp
    python mcp_server.py
    ```
 
-2. **Run the Interactive Client**
+2. **Choose Your Client Interface**
+
+   **Option A: AI-Powered Client (Recommended)**
+   ```bash
+   python mcp_client.py
+   ```
+   
+   **Option B: Manual Interactive Client**
    ```bash
    python minimal_client.py
    ```
+
+### Client Interfaces
+
+#### 🤖 AI-Powered Client (`mcp_client.py`)
+The enhanced client provides two modes:
+
+**1. AI Assistant Mode**
+- Use natural language to control the browser
+- AI automatically selects and executes appropriate tools
+- Context-aware suggestions and error recovery
+- Examples:
+  - "Go to google.com"
+  - "Click the search button" 
+  - "Fill out the login form"
+  - "Take a screenshot"
+  - "What's on this page?"
+
+**2. Manual Tool Selection**
+- Traditional menu-driven interface
+- Direct access to all browser automation tools
+- Smart parameter assistance and element discovery
+
+#### 🔧 Manual Client (`minimal_client.py`)
+- Simple, focused interface for direct tool usage
+- No AI dependencies required
+- Ideal for scripted or programmatic usage
 
 ### Available Tools
 
@@ -95,20 +138,40 @@ fastmcp
 | `get_clickable_elements` | List interactive elements | Element discovery |
 | `get_page_info` | Get page metadata | Page analysis |
 
+### AI Assistant Commands
+
+The AI assistant understands natural language requests:
+
+- **Navigation**: "Go to [website]", "Visit [URL]", "Navigate to [page]"
+- **Interaction**: "Click [element]", "Press [button]", "Select [option]"
+- **Forms**: "Fill out the form", "Enter [data] in [field]", "Submit the form"
+- **Content**: "What's on this page?", "Get text from [element]", "Extract [content]"
+- **Debugging**: "Take a screenshot", "Show page info", "What elements can I click?"
+
 ### Interactive Client Commands
 
 - **Number Selection**: Choose tools by entering their menu number
-- **`q`**: Quit the application
+- **`b`**: Go back to previous menu
 - **`h`**: Show help information
-- **`i`**: Display internal tools information
-- **`s`**: Take screenshot (during element selection)
-- **`p`**: Show page information
-- **`r`**: Refresh element list
-- **`m`**: Switch to manual input mode
+- **`q`**: Quit the application
+- **`m`**: Switch to manual input mode (when selecting elements)
 
 ## Examples
 
-### Basic Web Scraping
+### AI-Powered Automation
+```
+You: "Go to google.com and search for 'python automation'"
+
+AI: I'll help you navigate to Google and perform a search. Let me:
+1. Navigate to google.com
+2. Find the search input field
+3. Enter your search term
+4. Click the search button
+
+[Executes tools automatically]
+```
+
+### Manual Web Scraping
 ```python
 # 1. Start browser
 # 2. Navigate to target website
@@ -136,6 +199,13 @@ fastmcp
 
 ## Advanced Features
 
+### AI Intelligence
+The Gemini-powered client provides:
+- **Task Planning**: Automatically determines the sequence of tools needed
+- **Context Awareness**: Uses current page state to make intelligent decisions
+- **Error Recovery**: Suggests alternatives when operations fail
+- **Conversation Memory**: Maintains context across multiple interactions
+
 ### Smart Selector Generation
 The system uses sophisticated selector generation that prioritizes:
 1. **ID attributes** (most reliable)
@@ -162,6 +232,11 @@ When selecting elements for interaction:
 
 ## Configuration
 
+### Environment Variables
+```env
+GEMINI_API_KEY=your_google_gemini_api_key_here
+```
+
 ### Browser Options
 The browser can be configured with various options:
 ```python
@@ -178,10 +253,17 @@ browser_args = [
 Some tools are used internally and hidden from the user menu:
 - `evaluate_javascript`: Used by other tools for element detection
 - `wait_for_element`: Used internally for reliable interactions
+- `get_form_elements`: Used internally by form filling interface
 
 ## Troubleshooting
 
 ### Common Issues
+
+**AI Assistant Not Working**
+- Ensure you have a valid GEMINI_API_KEY in your .env file
+- Check your Google Cloud API quota and billing
+- Verify internet connectivity for API calls
+- Use manual mode as fallback
 
 **Browser Won't Start**
 - Ensure Playwright browsers are installed: `playwright install`
@@ -218,15 +300,45 @@ This allows you to see the browser window and observe interactions.
 
 ### Components
 - **MCP Server** (`mcp_server.py`): Handles browser automation backend
-- **Interactive Client** (`minimal_client.py`): Provides user interface and tool interaction
+- **AI Client** (`mcp_client.py`): Gemini-powered intelligent interface
+- **Manual Client** (`minimal_client.py`): Traditional interactive interface
 - **Browser Session**: Manages Playwright browser lifecycle
 - **Element Detection**: Smart element discovery and selector generation
+- **AI Agent**: Gemini integration for natural language processing
 
 ### Design Patterns
 - **Async/Await**: Full asynchronous operation for performance
 - **Error Handling**: Comprehensive error handling with user-friendly messages
-- **Separation of Concerns**: Clear separation between server logic and client interface
+- **Separation of Concerns**: Clear separation between server logic and client interfaces
+- **AI Integration**: Modular AI assistance that enhances but doesn't replace manual control
 - **Extensibility**: Easy to add new tools and features
+
+## Getting Started Quick Guide
+
+1. **First Time Setup**
+   ```bash
+   git clone <repo>
+   cd mcp-browser-automation
+   pip install -r requirements.txt
+   playwright install chromium
+   cp .env.example .env
+   # Add GEMINI_API_KEY to .env
+   ```
+
+2. **Start Automation**
+   ```bash
+   # Terminal 1: Start the MCP server
+   python mcp_server.py
+   
+   # Terminal 2: Start the AI client
+   python mcp_client.py
+   ```
+
+3. **First Commands**
+   - Choose "AI Assistant Mode"
+   - Try: "Go to google.com"
+   - Try: "Take a screenshot"
+   - Try: "What's on this page?"
 
 ## Contributing
 
@@ -245,8 +357,10 @@ This allows you to see the browser window and observe interactions.
 For issues and questions:
 - Check the troubleshooting section
 - Review the examples
+- Try the manual client if AI features aren't working
 - Open an issue on GitHub
 
 ---
 
-**Note**: This tool is designed for legitimate automation tasks. Always respect website terms of service and robots.txt files when using for web scraping.
+**Note**: This tool is designed for legitimate automation tasks. Always respect website terms of service and robots.txt files when using for web scraping. 
+The AI assistant requires a Google Gemini API key, but the manual client works without any external API dependencies.
