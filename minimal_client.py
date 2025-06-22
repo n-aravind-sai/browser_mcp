@@ -3,6 +3,7 @@ import logging
 from dotenv import load_dotenv
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+import json
 
 load_dotenv()
 
@@ -44,62 +45,60 @@ def show_tools_menu(available_tools):
     
     return visible_tools  # Return filtered list
 
+def parse_tool_response(response):
+    """Parse a tool response and return (data, error) tuple."""
+    if hasattr(response, "content") and response.content:
+        for content_item in response.content:
+            if hasattr(content_item, "text"):
+                try:
+                    data = json.loads(content_item.text)
+                    return data, None
+                except json.JSONDecodeError:
+                    return None, content_item.text
+    return None, "No response content"
+
 async def get_clickable_elements_data(session):
-    """Helper function to get clickable elements data from server"""
+    """Helper function to get clickable elements data from server. Returns (elements, error)."""
     try:
         print("\n🔍 Fetching clickable elements from browser...")
         response = await session.call_tool("get_clickable_elements")
-        
-        if hasattr(response, "content") and response.content:
-            for content_item in response.content:
-                if hasattr(content_item, "text"):
-                    import json
-                    try:
-                        data = json.loads(content_item.text)
-                        return data.get("elements", []), data.get("error")
-                    except json.JSONDecodeError:
-                        # If it's not JSON, treat as plain text
-                        return [], content_item.text
-        return [], "No response content"
+        data, error = parse_tool_response(response)
+        if data:
+            return data.get("elements", []), data.get("error")
+        return [], error
     except Exception as e:
         return [], f"Failed to fetch elements: {str(e)}"
 
 async def take_debug_screenshot(session):
-    """Helper function to take a screenshot for debugging"""
+    """Helper function to take a screenshot for debugging. Returns (True, None) on success, (False, error) on failure."""
     try:
         response = await session.call_tool("take_screenshot", {"path": "debug_screenshot.png"})
-        if hasattr(response, "content") and response.content:
+        data, error = parse_tool_response(response)
+        if data or (hasattr(response, "content") and response.content):
             for content_item in response.content:
                 if hasattr(content_item, "text"):
                     print(f"📸 {content_item.text}")
-                    return True
-        return False
+                    return True, None
+        return False, error or "No screenshot response"
     except Exception as e:
         print(f"❌ Failed to take screenshot: {e}")
-        return False
+        return False, f"Failed to take screenshot: {e}"
 
 async def get_page_info(session):
-    """Helper function to get current page information"""
+    """Helper function to get current page information. Returns (data, error)."""
     try:
         response = await session.call_tool("get_page_info")
-        if hasattr(response, "content") and response.content:
-            for content_item in response.content:
-                if hasattr(content_item, "text"):
-                    import json
-                    try:
-                        data = json.loads(content_item.text)
-                        return data
-                    except json.JSONDecodeError:
-                        return {"error": "Failed to parse page info"}
-        return {"error": "No page info available"}
+        data, error = parse_tool_response(response)
+        if data:
+            return data, None
+        return {}, error
     except Exception as e:
-        return {"error": f"Failed to get page info: {str(e)}"}
+        return {}, f"Failed to get page info: {str(e)}"
 
 async def get_text_elements_data(session):
-    """Helper function to get text elements data from server"""
+    """Helper function to get text elements data from server. Returns (elements, error)."""
     try:
         print("\n🔍 Fetching text elements from browser...")
-        # Use JavaScript evaluation to get text-containing elements
         response = await session.call_tool("evaluate_javascript", {
             "expression": """
             (() => {
@@ -108,33 +107,26 @@ async def get_text_elements_data(session):
                     article, section, main, aside, header, footer, nav,
                     [role="heading"], [role="text"], [role="article"]
                 `);
-                
+
                 const result = [];
                 const seenText = new Set();
-                
+
                 for (let el of elements) {
                     const text = el.textContent?.trim();
-                    if (!text || text.length < 5) continue; // Skip very short text
-                    
-                    // Skip if text is too long (likely contains child elements)
+                    if (!text || text.length < 5) continue;
                     if (text.length > 500) continue;
-                    
-                    // Skip duplicates
                     if (seenText.has(text)) continue;
                     seenText.add(text);
-                    
-                    // Check if element is visible
+
                     const rect = el.getBoundingClientRect();
                     const style = window.getComputedStyle(el);
                     if (rect.width <= 0 || rect.height <= 0) continue;
                     if (style.visibility === 'hidden' || style.display === 'none') continue;
-                    
-                    // Get selector (reuse the existing function if available)
+
                     let selector;
                     if (window.MCPGetSelector) {
                         selector = window.MCPGetSelector(el);
                     } else {
-                        // Fallback selector logic
                         if (el.id) {
                             selector = "#" + el.id;
                         } else if (el.className && typeof el.className === 'string') {
@@ -144,7 +136,7 @@ async def get_text_elements_data(session):
                             selector = el.tagName.toLowerCase();
                         }
                     }
-                    
+
                     result.push({
                         text: text,
                         selector: selector,
@@ -152,98 +144,68 @@ async def get_text_elements_data(session):
                         length: text.length
                     });
                 }
-                
-                // Sort by tag priority and text length
+
                 result.sort((a, b) => {
                     const tagPriority = { h1: 0, h2: 1, h3: 2, h4: 3, h5: 4, h6: 5, p: 6, div: 10 };
                     const aPriority = tagPriority[a.tag] || 20;
                     const bPriority = tagPriority[b.tag] || 20;
-                    
                     if (aPriority !== bPriority) return aPriority - bPriority;
-                    return a.length - b.length; // Shorter text first within same tag type
+                    return a.length - b.length;
                 });
-                
-                return result.slice(0, 50); // Limit to 50 elements
+
+                return result.slice(0, 50);
             })()
             """
         })
-        
-        if hasattr(response, "content") and response.content:
-            for content_item in response.content:
-                if hasattr(content_item, "text"):
-                    import json
-                    try:
-                        data = json.loads(content_item.text)
-                        return data, None
-                    except json.JSONDecodeError:
-                        return [], content_item.text
-        return [], "No response content"
+        data, error = parse_tool_response(response)
+        if data:
+            return data, None
+        return [], error
     except Exception as e:
         return [], f"Failed to fetch text elements: {str(e)}"
 
 async def get_body_text(session):
-    """Helper function to get all body text"""
+    """Helper function to get all body text from the browser. Returns (data, error)."""
     try:
         response = await session.call_tool("evaluate_javascript", {
             "expression": """
             (() => {
                 const body = document.body;
                 if (!body) return { error: "No body element found" };
-                
-                // Get clean text content
                 const text = body.innerText || body.textContent || "";
-                
-                // Also get structured text by headings
                 const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).map(h => ({
                     level: h.tagName.toLowerCase(),
                     text: h.textContent?.trim()
                 })).filter(h => h.text);
-                
-                // Get paragraphs
-                const paragraphs = Array.from(document.querySelectorAll('p')).map(p => 
+                const paragraphs = Array.from(document.querySelectorAll('p')).map(p =>
                     p.textContent?.trim()
                 ).filter(p => p && p.length > 10);
-                
                 return {
                     fullText: text.trim(),
                     wordCount: text.trim().split(/\\s+/).length,
                     charCount: text.length,
-                    headings: headings.slice(0, 20), // Limit headings
-                    paragraphs: paragraphs.slice(0, 10) // Limit paragraphs
+                    headings: headings.slice(0, 20),
+                    paragraphs: paragraphs.slice(0, 10)
                 };
             })()
             """
         })
-        
-        if hasattr(response, "content") and response.content:
-            for content_item in response.content:
-                if hasattr(content_item, "text"):
-                    import json
-                    try:
-                        return json.loads(content_item.text)
-                    except json.JSONDecodeError:
-                        return {"error": "Failed to parse body text"}
-        return {"error": "No response content"}
+        data, error = parse_tool_response(response)
+        if data:
+            return data, None
+        return {}, error
     except Exception as e:
-        return {"error": f"Failed to get body text: {str(e)}"}
+        return {}, f"Failed to get body text: {str(e)}"
 
 async def get_form_elements_data(session):
-    """Helper function to get form elements data from server"""
+    """Helper function to get form elements data from server. Returns (elements, error)."""
     try:
         print("\n📝 Fetching form elements from browser...")
         response = await session.call_tool("get_form_elements")
-        
-        if hasattr(response, "content") and response.content:
-            for content_item in response.content:
-                if hasattr(content_item, "text"):
-                    import json
-                    try:
-                        data = json.loads(content_item.text)
-                        return data.get("elements", []), data.get("error")
-                    except json.JSONDecodeError:
-                        # If it's not JSON, treat as plain text
-                        return [], content_item.text
-        return [], "No response content"
+        data, error = parse_tool_response(response)
+        if data:
+            return data.get("elements", []), data.get("error")
+        return [], error
     except Exception as e:
         return [], f"Failed to fetch form elements: {str(e)}"
 
