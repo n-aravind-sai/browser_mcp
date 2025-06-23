@@ -431,6 +431,47 @@ async def get_user_input_for_param(session, selected_tool, param, definition, is
     choices = definition.get("enum")
     type_hint = definition.get("type", "string")
 
+    # User-friendly clickable element selection for click_element tool
+    if selected_tool.name == "click_element" and param == "selector":
+        print("\n🔗 Listing all clickable elements on the page before selection...")
+        elements, error = await get_clickable_elements_data(session)
+        if error:
+            print(f"⚠️ Warning while fetching elements: {error}")
+        if not elements:
+            print("No clickable elements found on the page.")
+            return None
+        print("\nAvailable clickable elements on the page:")
+        print("=" * 100)
+        for i, el in enumerate(elements):
+            text = el.get("text", "[No text]").strip()
+            selector = el.get("selector", "<unknown>")
+            tag = el.get("tag", "unknown")
+            elem_type = el.get("type")
+            href = el.get("href")
+            type_info = f" ({elem_type})" if elem_type else ""
+            href_info = f" → {href}" if href else ""
+            print(f"{i + 1:3d}. [{tag.upper()}{type_info}] {text}{href_info}")
+            print(f"     Selector: {selector}")
+            if (i + 1) % 5 == 0:
+                print()
+        print("=" * 100)
+        while True:
+            user_input = input(f"Enter element index (1-{len(elements)}) [or 'q' to quit]: ").strip()
+            if user_input.lower() == 'q':
+                print("👋 Exiting...")
+                return
+            try:
+                selected = int(user_input)
+                if 1 <= selected <= len(elements):
+                    return elements[selected - 1]["selector"]
+                else:
+                    print(f"❌ Invalid selection. Enter 1-{len(elements)} or 'q'.")
+            except ValueError:
+                print("❌ Please enter a valid number or 'q'.")
+        return
+
+    # ...existing code for other parameters...
+
     # Special handling for click_link_by_index: show links before asking for index
     if selected_tool.name == "click_link_by_index" and param == "index":
         print("\n🔗 Listing all links on the page before index selection...")
