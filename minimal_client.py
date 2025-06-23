@@ -14,7 +14,9 @@ logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s: %(m
 HIDDEN_TOOLS = {
     'evaluate_javascript',  # Used internally by get_clickable_elements and other tools
     'wait_for_element',     # Used internally by click_element and other tools
-    'get_form_elements'     # Used internally by form filling interface
+    'get_form_elements',    # Used internally by form filling interface
+    'get_clickable_elements',  # Now hidden from menu
+    'list_links_with_context', # Now hidden from menu
 }
 
 def cast_input_to_type(value: str, type_hint: str):
@@ -41,7 +43,7 @@ def show_tools_menu(available_tools):
     for idx, tool in enumerate(visible_tools):
         print(f"{idx + 1:2d}. {tool.name:<20} | {tool.description}")
     print("=" * 60)
-    print("Commands: [tool number] | 'l' browse links | 'q' to quit | 'h' for help | 'i' for info")  # <-- Removed 'q' to quit from here
+    print("Commands: [tool number] | 'q' to quit | 'h' for help | 'i' for info")  
     
     return visible_tools  # Return filtered list
 
@@ -424,13 +426,58 @@ def show_internal_tools_info():
     print("=" * 60)
 
 async def get_user_input_for_param(session, selected_tool, param, definition, is_required=False):
-    """Get user input for a parameter with validation and clickable element support"""
     param_desc = definition.get("description", "")
     default_val = definition.get("default")
     choices = definition.get("enum")
     type_hint = definition.get("type", "string")
 
-    # Special handling: auto-fetch clickable elements if relevant
+    # Special handling for click_link_by_index: show links before asking for index
+    if selected_tool.name == "click_link_by_index" and param == "index":
+        print("\n🔗 Listing all links on the page before index selection...")
+        response = await session.call_tool("list_links_with_context")
+        links = []
+        if hasattr(response, "content") and response.content:
+            for content_item in response.content:
+                if hasattr(content_item, "text"):
+                    try:
+                        data = json.loads(content_item.text)
+                        links = data.get("links", [])
+                    except Exception:
+                        pass
+        if not links:
+            print("No links found on the page.")
+            return None
+        print("\nAvailable links on the page:")
+        print("=" * 100)
+        for link in links:
+            idx = link.get("index")
+            txt = link.get("text", "")
+            href = link.get("href", "")
+            ctxtTag = link.get("containerTag")
+            ctxtText = link.get("context")
+            if ctxtTag and ctxtText:
+                print(f"{idx:3d}. {txt} – {href} (in {ctxtTag}: \"{ctxtText}\")")
+            else:
+                print(f"{idx:3d}. {txt} – {href}")
+            if (idx + 1) % 5 == 0:
+                print()
+        print("=" * 100)
+        while True:
+            user_input = input(f"Enter link index (1-{len(links)}) [or 'q' to quit]: ").strip()
+            if user_input.lower() == 'q':
+                print("👋 Exiting...")
+                return
+            try:
+                selected = int(user_input)
+                if 1 <= selected <= len(links):
+                    return selected
+                else:
+                    print(f"❌ Invalid selection. Enter 1-{len(links)} or 'q'.")
+            except ValueError:
+                print("❌ Please enter a valid number or 'q'.")
+        
+        return
+
     if "click" in selected_tool.name.lower() and "selector" in param.lower():
         page_info = await get_page_info(session)
         if "error" not in page_info:
@@ -933,9 +980,6 @@ async def run_script():
                                 continue
                             elif selection.lower() == 'i':
                                 show_internal_tools_info()
-                                continue
-                            elif selection.lower() == 'l':
-                                await browse_and_click_link(session)
                                 continue
                             selected_index = int(selection) - 1
                             if 0 <= selected_index < len(visible_tools):

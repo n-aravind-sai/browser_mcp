@@ -490,7 +490,7 @@ async def navigate_to(url: str) -> str:
 
 @mcp.tool()
 async def click_element(selector: str, by: str = "css") -> str:
-    """Click on an element using CSS or XPath selector."""
+    """Click on an element """
     if not session.page:
         raise RuntimeError("Browser not started. Call start_browser first.")
     try:
@@ -520,7 +520,7 @@ async def click_element(selector: str, by: str = "css") -> str:
 
 @mcp.tool()
 async def fill_form(selector: str, value: str) -> str:
-    """Fill a form field with a value using enhanced validation and error handling"""
+    """Fill a form field with a value """
     try:
         return await session.fill_enhanced(selector, value)
     except Exception as e:
@@ -785,35 +785,48 @@ async def get_form_elements() -> dict:
         return {"error": f"Failed to get form elements: {str(e)}", "elements": []}
 
 @mcp.tool()
-async def click_link_by_index(index: int) -> str:
-    """Click (navigate to) a link on the page by its index as listed by list_links_with_context."""
+async def click_link_by_index(index: int) -> dict:
+    """Click a link on the page by its index. Lists all links before clicking."""
     if not session.page:
-        raise RuntimeError("Browser not started. Call start_browser first.")
+        return {"error": "Browser not started. Call start_browser first."}
     try:
-        # Get all links with context
-        anchors = await session.page.evaluate("""
-            () => {
-                const anchors = Array.from(document.querySelectorAll('a'));
-                return anchors.map((anchor, idx) => ({
-                    index: idx + 1,
-                    href: anchor.href,
-                    selector: `(//a)[${idx + 1}]`
-                }));
-            }
-        """)
-        if not anchors or index < 1 or index > len(anchors):
-            return f"Invalid link index: {index}"
-        link = anchors[index - 1]
-        # Click the link using XPath selector
-        element = await session.page.query_selector(f'xpath={link["selector"]}')
+        links_result = await list_links_with_context()
+        links = links_result.get("links", [])
+        if not links:
+            return {"error": "No links found on the page."}
+
+        if not isinstance(index, int) or index < 1 or index > len(links):
+            return {"error": f"Invalid link index: {index}. Please select a number between 1 and {len(links)}."}
+
+        link = links[index - 1]
+        selector = link.get("selector")
+        if not selector:
+            return {"error": f"No selector found for link at index {index}."}
+
+        # Try to find the element using XPath selector
+        element = await session.page.query_selector(f'xpath={selector}')
         if not element:
-            return f"Link element not found for index {index}"
-        await element.scroll_into_view_if_needed()
-        await element.focus()
-        await element.click(timeout=5000, force=True)
-        return f"Clicked link at index {index}: {link['href']}"
+            return {"error": f"Link element not found for index {index}."}
+
+        try:
+            await element.scroll_into_view_if_needed()
+            await element.focus()
+            await element.click(timeout=5000, force=True)
+            return {"clicked": f"Clicked link at index {index}: {link.get('href', '[no href]')}"}
+        except Exception as click_error:
+            # Try JS fallback for navigation if it's an <a> tag with href
+            href = link.get("href")
+            if href:
+                try:
+                    await session.page.evaluate(
+                        "(href) => { window.location.href = href; }", href
+                    )
+                    return {"clicked": f"Navigated to {href} as a fallback for link at index {index}."}
+                except Exception as nav_error:
+                    return {"error": f"Failed to click or navigate to link at index {index}: {nav_error}"}
+            return {"error": f"Failed to click link at index {index}: {click_error}"}
     except Exception as e:
-        return f"Error clicking link at index {index}: {str(e)}"
+        return {"error": f"Unexpected error clicking link at index {index}: {str(e)}"}
 
 # Run the MCP server
 try:
