@@ -784,6 +784,37 @@ async def get_form_elements() -> dict:
     except Exception as e:
         return {"error": f"Failed to get form elements: {str(e)}", "elements": []}
 
+@mcp.tool()
+async def click_link_by_index(index: int) -> str:
+    """Click (navigate to) a link on the page by its index as listed by list_links_with_context."""
+    if not session.page:
+        raise RuntimeError("Browser not started. Call start_browser first.")
+    try:
+        # Get all links with context
+        anchors = await session.page.evaluate("""
+            () => {
+                const anchors = Array.from(document.querySelectorAll('a'));
+                return anchors.map((anchor, idx) => ({
+                    index: idx + 1,
+                    href: anchor.href,
+                    selector: `(//a)[${idx + 1}]`
+                }));
+            }
+        """)
+        if not anchors or index < 1 or index > len(anchors):
+            return f"Invalid link index: {index}"
+        link = anchors[index - 1]
+        # Click the link using XPath selector
+        element = await session.page.query_selector(f'xpath={link["selector"]}')
+        if not element:
+            return f"Link element not found for index {index}"
+        await element.scroll_into_view_if_needed()
+        await element.focus()
+        await element.click(timeout=5000, force=True)
+        return f"Clicked link at index {index}: {link['href']}"
+    except Exception as e:
+        return f"Error clicking link at index {index}: {str(e)}"
+
 # Run the MCP server
 try:
     mcp.run(transport="stdio")
