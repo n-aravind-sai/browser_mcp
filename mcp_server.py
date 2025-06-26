@@ -1,5 +1,6 @@
 import asyncio
 import json
+import datetime
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
 from playwright.async_api import async_playwright, Page, Browser, Playwright
@@ -275,6 +276,7 @@ class BrowserSession:
     async def screenshot(self, path: str = "screenshot.png"):
         if not self.page:
             raise RuntimeError("Browser not started. Call start_browser first.")
+        
         await self.page.screenshot(path=path, full_page=True)
         return f"Screenshot saved to {path}"
 
@@ -538,7 +540,14 @@ async def extract_text(selector: str) -> str:
 async def take_screenshot(path: str = "screenshot.png") -> str:
     """Take a screenshot of the current page"""
     try:
-        return await session.screenshot(path)
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        timestamp = timestamp.replace("-", "/").replace("_", ":")
+        date_part, time_part = timestamp.split(":")
+        time_part = time_part.replace(":", ":")
+        timestamp = f"{date_part}_{time_part}"
+        base, ext = path.rsplit('.', 1)
+        path_with_ts = f"{base}_{timestamp}.{ext}"
+        return await session.screenshot(path_with_ts)
     except Exception as e:
         return f"Error taking screenshot: {str(e)}"
 
